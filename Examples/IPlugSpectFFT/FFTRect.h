@@ -526,13 +526,6 @@ class gFFTAnalyzer : public IControl
     void SetGradientOn(const bool &on) { showGradient = on; }
     IColor GetColorFill() { return mColorFill; }
     IColor GetColorPeak() { return mColorPeak; }
-      
-      void SetDelegate(IGEditorDelegate& dlg) {
-        IControl::SetDelegate(dlg);
-        if (freqGrid != nullptr) {
-          freqGrid->SetDelegate(dlg);
-        }
-      }
 
     void OnResize() override
     {
@@ -628,6 +621,11 @@ class gFFTAnalyzer : public IControl
       fftframes->AddItem("8");
       fftframes->AddItem("9");
       fftframes->AddItem("10");
+        
+        if (freqGrid != nullptr) {
+            IGEditorDelegate *d = static_cast<IGEditorDelegate*>(GetDelegate());
+            d->GetUI()->AttachControl(freqGrid, -1, "FFT");
+        }
     }
 
     void Draw(IGraphics &g) override
