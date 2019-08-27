@@ -28,20 +28,21 @@ IPlugSpectFFT::IPlugSpectFFT(const InstanceInfo& info)
     pGraphics->AttachControl(new IBKnobControl(20., 20., knob,  kGain));
 
     const IRECT iView(80, 20, pGraphics->GetBounds().R - 10, pGraphics->GetBounds().B - 10);
-    pFFTAnalyzer = pGraphics->AttachControl(new gFFTAnalyzer<>(iView), kCtrlTagFFT, "FFT");
+    pFFTAnalyzer = new gFFTAnalyzer<>(iView, 8192, 15, 21000, Spect_FFT::win_BlackmanHarris);
+    pGraphics->AttachControl(pFFTAnalyzer, kCtrlTagFFT, "FFT");
 
-    const IText textLabel{ 14, COLOR_BLACK, "Roboto-Regular", EAlign::Center, EVAlign::Middle, 0 };
-    pFFTFreqDraw = pGraphics->AttachControl(new gFFTFreqDraw(iView, textLabel), -1, "FFT");
+//    const IText textLabel{ 14, COLOR_BLACK, "Roboto-Regular", EAlign::Center, EVAlign::Middle, 0 };
+//    pGraphics->AttachControl(pFFTAnalyzer->freqGrid, -1, "FFT");
 
-    dynamic_cast<gFFTAnalyzer<>*>(pFFTAnalyzer)->getFFT()->SetWindowType(Spect_FFT::win_BlackmanHarris);
+//    dynamic_cast<gFFTAnalyzer<>*>(pFFTAnalyzer)->getFFT()->SetWindowType(Spect_FFT::win_BlackmanHarris);
 
-    //setting the min/max freq for fft display and freq lines
-   constexpr double maxF = 21000.;
-   constexpr double minF = 15.;
-   dynamic_cast<gFFTAnalyzer<>*>(pFFTAnalyzer)->SetMaxFreq(maxF);
-     dynamic_cast<gFFTAnalyzer<>*>(pFFTAnalyzer)->SetMinFreq(minF);
-     dynamic_cast<gFFTFreqDraw*>(pFFTFreqDraw)->SetMaxFreq(maxF);
-     dynamic_cast<gFFTFreqDraw*>(pFFTFreqDraw)->SetMinFreq(minF);
+//    //setting the min/max freq for fft display and freq lines
+//   constexpr double maxF = 21000.;
+//   constexpr double minF = 15.;
+//   dynamic_cast<gFFTAnalyzer<>*>(pFFTAnalyzer)->SetMaxFreq(maxF);
+//     dynamic_cast<gFFTAnalyzer<>*>(pFFTAnalyzer)->SetMinFreq(minF);
+//     dynamic_cast<gFFTFreqDraw*>(pFFTFreqDraw)->SetMaxFreq(maxF);
+//     dynamic_cast<gFFTFreqDraw*>(pFFTFreqDraw)->SetMinFreq(minF);
 
     //setting +3dB/octave compensation to the fft display.  Most use +3.  Voxengo Span uses +4.5.
      dynamic_cast<gFFTAnalyzer<>*>(pFFTAnalyzer)->SetOctaveGain(3., true);

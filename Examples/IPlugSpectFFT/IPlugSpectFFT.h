@@ -34,7 +34,7 @@ public:
   void OnReset() override;
 private:
   //have pointers to controls in order to reset samplerate, change scale, etc... after the control is created
-  IControl* pFFTAnalyzer, *pFFTFreqDraw;
+  gFFTAnalyzer<>* pFFTAnalyzer;
   gFFTAnalyzer<>::Sender mSender{ kCtrlTagFFT };
   double mGain;
 #endif

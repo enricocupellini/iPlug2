@@ -291,10 +291,130 @@ protected:
 	int fftSize, frameSize, windowType;
 };
 
+//Class for drawing vertical frequency line indicators with text values
+class gFFTFreqDraw : public IControl
+{
+public:
+  gFFTFreqDraw(const IRECT pR,  const IText &fonttxt)
+  : IControl (pR)
+  {
+    txt = fonttxt;
+    mColor = txt.mFGColor;
+    minFreq = 20.;
+    maxFreq = 20000.;
+    //space is used calculate text size.  It is only an estimate.  Using something like cairo_text_extents() is a better option
+    space = txt.mSize + 4;
+    CalcSpacing();
+    mIgnoreMouse = true;
+  }
+  
+  ~gFFTFreqDraw() {}
+  
+  void SetMinFreq(const double f)
+  {
+    minFreq = Clip(f, 1., maxFreq);
+    CalcSpacing();
+  }
+  
+  void SetMaxFreq(const double f)
+  {
+    maxFreq = std::max(f, minFreq);
+    CalcSpacing();
+  }
+  
+  void Draw(IGraphics& g) override
+  {
+    for (int i = 0; i < HLineDraw.size(); i++) {
+      g.DrawVerticalLine(mColor, HLineDraw[i], mRECT.B - 20, mRECT.T);
+    }
+    
+    for (int i = 0; i < FreqTxtDraw.size(); i++) {
+      char hz[7];
+      std::strcpy(hz, FreqTxtDraw[i].freq.c_str());
+      IRECT box(FreqTxtDraw[i].pos - (space / 2), mRECT.B - 15, FreqTxtDraw[i].pos + (space / 2), mRECT.B);
+      g.DrawText(txt, hz, box);
+    }
+  }
+  
+  void SetText(IText &fonttxt) {
+    txt = fonttxt;
+  }
+  
+private:
+  //this works a lot nicer with something like Cairo where you can get the pixel width of the displayed text (cairo_text_extents()) to determine spacing
+  void CalcSpacing()
+  {
+    int prevTxt = space / 2;
+    FreqTxtDraw.resize(0);
+    HLineDraw.resize(0);
+    bool addToList = false;
+    txtLocation toAdd;
+    std::ostringstream s;
+    int minFreq10 = minFreq;
+    if (minFreq10 % 10 != 0) minFreq10 = (10 - (int)(minFreq) % 10) + (int)(minFreq);
+    for (int i = minFreq10; i < maxFreq; i += 10) {
+      const int bin = (int)((std::log10((double)i / (double)minFreq) / (std::log10((double)maxFreq / (double)minFreq))) * (double)(mRECT.W()));
+      if (i < 80 && i % 10 == 0) {
+        if (bin > prevTxt + space && bin < mRECT.W() - space / 2) {
+          addToList = true;
+          s << i;
+        }
+      }
+      else if (i >= 80 && i < 799 && i % 100 == 0) {
+        if (bin > prevTxt + space && bin < mRECT.W() - space / 2) {
+          addToList = true;
+          s << i;
+        }
+      }
+      else if (i >= 800 && i < 14999 && i % 1000 == 0) {
+        if (bin > prevTxt + space && bin < mRECT.W() - space / 2) {
+          addToList = true;
+          s << (int)(i * 0.001);
+          s << 'k';
+        }
+      }
+      else if (i % 5000 == 0) {
+        if (bin > prevTxt + space && bin < mRECT.W() - space / 2) {
+          addToList = true;
+          s << (int)(i * 0.001);
+          s << 'k';
+        }
+      }
+      
+      if (addToList) {
+        addToList = false;
+        toAdd.pos = bin + mRECT.L;
+        const std::string freq_as_string(s.str());
+        toAdd.freq = freq_as_string;
+        FreqTxtDraw.push_back(toAdd);
+        HLineDraw.push_back(toAdd.pos);
+        s.clear();
+        s.str("");
+        prevTxt = bin;
+      }
+    }
+  }
+  
+  struct txtLocation
+  {
+    int pos;
+    std::string WDL_FIXALIGN freq;
+  }WDL_FIXALIGN;
+  
+  std::vector<int>HLineDraw;
+  std::vector<txtLocation>FreqTxtDraw;
+  IColor mColor;
+  IText txt;
+  int space;
+  double minFreq, maxFreq;
+};
+
+
 template<int QUEUE_SIZE = 4096>
 class gFFTAnalyzer : public IControl
     {
     public:
+      gFFTFreqDraw* freqGrid;
       static constexpr int kUpdateMessage = 0;
 
       /** Used on the DSP side in order to queue sample values and transfer data to low priority thread. */
@@ -334,28 +454,35 @@ class gFFTAnalyzer : public IControl
         IPlugQueue<WDL_FFT_REAL> mQueue{ QUEUE_SIZE };
       };
 
-      gFFTAnalyzer(const IRECT &pR, const int &initialSize = 4096)
-        : IControl(pR, -1)
+      gFFTAnalyzer(const IRECT &pR, const int &initialSize = 4096, double minF = 10., double maxF = 22050., Spect_FFT::eWindowType windowType = Spect_FFT::win_BlackmanHarris, bool drawFreqGrid = true)
+        : IControl(pR, -1), minFreq(minF), maxFreq(maxF)
       {
-        
         mColorPeak = COLOR_BLACK;
         mColorFill = COLOR_RED;
         fftBins = (WDL_FFT_REAL)initialSize;
         dBFloor = -120.;
         val = 0.0;
-        minFreq = 1.;
-        maxFreq = 44100. / 0.5;
         sampleRate = 44100.;
         OctaveGain = 1.;
         value.resize(32768 / 2 + 1);
         showFill = showGradient = true;
         pFFT = new Spect_FFT(initialSize, 2);
+        pFFT->SetWindowType(windowType);
+        if (drawFreqGrid) {
+          const IText textLabel{ 14, COLOR_BLACK, "Roboto-Regular", EAlign::Center, EVAlign::Middle, 0 };
+          freqGrid = new gFFTFreqDraw(pR, textLabel);
+          freqGrid->SetMinFreq(minFreq);
+          freqGrid->SetMaxFreq(maxFreq);
+        }
       }
 
       ~gFFTAnalyzer()
       {
         menu.RemoveEmptySubmenus();
         delete pFFT;
+        if (freqGrid != nullptr) {
+          delete freqGrid;
+        }
       }
 
         void OnMsgFromDelegate(int messageTag, int dataSize, const void* pData) override
@@ -399,6 +526,13 @@ class gFFTAnalyzer : public IControl
     void SetGradientOn(const bool &on) { showGradient = on; }
     IColor GetColorFill() { return mColorFill; }
     IColor GetColorPeak() { return mColorPeak; }
+      
+      void SetDelegate(IGEditorDelegate& dlg) {
+        IControl::SetDelegate(dlg);
+        if (freqGrid != nullptr) {
+          freqGrid->SetDelegate(dlg);
+        }
+      }
 
     void OnResize() override
     {
@@ -743,120 +877,5 @@ class gFFTAnalyzer : public IControl
     IPopupMenu *fftsizemenu, *fftwindowmenu, *fftframes;
     IPopupMenu menu;
      Spect_FFT* pFFT;
-    };
-
-
-    //Class for drawing vertical frequency line indicators with text values
-    class gFFTFreqDraw : public IControl
-    {
-    public:
-        gFFTFreqDraw(const IRECT pR,  const IText &fonttxt)
-        : IControl (pR)
-        {
-            txt = fonttxt;
-            mColor = txt.mFGColor;
-            minFreq = 20.;
-            maxFreq = 20000.;
-            //space is used calculate text size.  It is only an estimate.  Using something like cairo_text_extents() is a better option
-            space = txt.mSize + 4;
-            CalcSpacing();
-            mIgnoreMouse = true;
-        }
-
-        ~gFFTFreqDraw() {}
-
-        void SetMinFreq(const double f)
-        { 
-            minFreq = Clip(f, 1., maxFreq);
-            CalcSpacing();
-        }
-
-        void SetMaxFreq(const double f)
-        { 
-          maxFreq = std::max(f, minFreq);
-            CalcSpacing();
-        }
-  
-        void Draw(IGraphics& g) override
-        {
-          for (int i = 0; i < HLineDraw.size(); i++) {
-            g.DrawVerticalLine(mColor, HLineDraw[i], mRECT.B - 20, mRECT.T);
-          }
-
-          for (int i = 0; i < FreqTxtDraw.size(); i++) {
-            char hz[7];
-            std::strcpy(hz, FreqTxtDraw[i].freq.c_str());
-            IRECT box(FreqTxtDraw[i].pos - (space / 2), mRECT.B - 15, FreqTxtDraw[i].pos + (space / 2), mRECT.B);
-            g.DrawText(txt, hz, box);
-          }
-        }
-
-    private:
-		//this works a lot nicer with something like Cairo where you can get the pixel width of the displayed text (cairo_text_extents()) to determine spacing
-      void CalcSpacing()
-      {
-        int prevTxt = space / 2;
-        FreqTxtDraw.resize(0);
-        HLineDraw.resize(0);
-        bool addToList = false;
-        txtLocation toAdd;
-        std::ostringstream s;
-        int minFreq10 = minFreq;
-        if (minFreq10 % 10 != 0) minFreq10 = (10 - (int)(minFreq) % 10) + (int)(minFreq);
-        for (int i = minFreq10; i < maxFreq; i += 10) {
-          const int bin = (int)((std::log10((double)i / (double)minFreq) / (std::log10((double)maxFreq / (double)minFreq))) * (double)(mRECT.W()));
-          if (i < 80 && i % 10 == 0) {
-            if (bin > prevTxt + space && bin < mRECT.W() - space / 2) {
-              addToList = true;
-              s << i;
-            }
-          }
-          else if (i >= 80 && i < 799 && i % 100 == 0) {
-            if (bin > prevTxt + space && bin < mRECT.W() - space / 2) {
-              addToList = true;
-              s << i;
-            }
-          }
-          else if (i >= 800 && i < 14999 && i % 1000 == 0) {
-            if (bin > prevTxt + space && bin < mRECT.W() - space / 2) {
-              addToList = true;
-              s << (int)(i * 0.001);
-              s << 'k';
-            }
-          }
-          else if (i % 5000 == 0) {
-            if (bin > prevTxt + space && bin < mRECT.W() - space / 2) {
-              addToList = true;
-              s << (int)(i * 0.001);
-              s << 'k';
-            }
-          }
-
-          if (addToList) {
-            addToList = false;
-            toAdd.pos = bin + mRECT.L;
-            const std::string freq_as_string(s.str());
-            toAdd.freq = freq_as_string;
-            FreqTxtDraw.push_back(toAdd);
-            HLineDraw.push_back(toAdd.pos);
-            s.clear();
-            s.str("");
-            prevTxt = bin;
-          }
-        }
-      }
-
-        struct txtLocation
-        {
-            int pos;
-            std::string WDL_FIXALIGN freq;
-        }WDL_FIXALIGN;
-
-        std::vector<int>HLineDraw;
-        std::vector<txtLocation>FreqTxtDraw;
-        IColor mColor;
-        IText txt;
-        int space;
-        double minFreq, maxFreq;
     };
 
