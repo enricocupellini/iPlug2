@@ -119,13 +119,23 @@ public:
                     case 0:     // SAVE preset bank
                     {
                         WDL_String fileName;
-                         fileName.Set(mPlug->GetPresetName(mPlug->GetCurrentPresetIdx()));
+                        if (strcmp(mLabel.Get(), "Click here to browse preset banks...") == 0)  // match
+                        {
+                            fileName.Set("Bank ...");
+                        }
+                        else{
+                            fileName.Set(mLabel.Get());
+                        }
+//                         fileName.Set(mPlug->GetPresetName(mPlug->GetCurrentPresetIdx()));
                         GetUI()->PromptForFile(fileName, mPreviousPath, EFileAction::Save, "fxb");
 //                        mPlug->SaveProgramAsFXP(fileName.Get());
-                        mPlug->ModifyCurrentPreset();
-                        mPlug->SaveBankAsFXB(fileName.Get());
-                        mLabel.Set(fileName.get_filepart());
-                        SetDirty(false);
+                        if (strcmp(fileName.Get(), "") != 0)  // not match
+                        {
+                            mPlug->ModifyCurrentPreset();
+                            mPlug->SaveBankAsFXB(fileName.Get());
+                            mLabel.Set(fileName.get_filepart());
+                            SetDirty(false);
+                        }
                         break;
                     }
                     case 1:
@@ -145,9 +155,10 @@ public:
             else{
                 IPopupMenu::Item* pItem = pSelectedMenu->GetChosenItem();
                 WDL_String* pStr = mFiles.Get(pItem->GetTag());
+                mPlug->LoadBankFromFXB(pStr->Get());
+                pStr->remove_fileext();
                 mLabel.Set(pStr->get_filepart());
 //                mPlug->LoadProgramFromFXP(pStr->Get());
-                mPlug->LoadBankFromFXB(pStr->Get());
                 SetDirty(false);
             }
         }
@@ -160,9 +171,11 @@ public:
     :ICaptionControl(bounds, paramIdx, text, BGColor) {}
     
     void OnPopupMenuSelection(IPopupMenu* pSelectedMenu, int valIdx) override {
-        IPluginBase* mPlug = dynamic_cast<IPluginBase*> (GetDelegate());
-        mPlug->RestorePreset(pSelectedMenu->GetChosenItemIdx());
-        mPlug->GetUI()->GetControlWithTag(kCtrlTagBrowser)->SetDirty();
+        if (pSelectedMenu != nullptr) {
+            IPluginBase* mPlug = dynamic_cast<IPluginBase*> (GetDelegate());
+            mPlug->RestorePreset(pSelectedMenu->GetChosenItemIdx());
+            mPlug->GetUI()->GetControlWithTag(kCtrlTagBrowser)->SetDirty();
+        }
     }
 };
 
