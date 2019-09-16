@@ -116,13 +116,15 @@ public:
             if(pSelectedMenu == &mMainMenu && pSelectedMenu->GetChosenItemIdx() < 2)
             {
                 switch (pSelectedMenu->GetChosenItemIdx()) {
-                    case 0:
+                    case 0:     // SAVE preset bank
                     {
                         WDL_String fileName;
                          fileName.Set(mPlug->GetPresetName(mPlug->GetCurrentPresetIdx()));
                         GetUI()->PromptForFile(fileName, mPreviousPath, EFileAction::Save, "fxb");
 //                        mPlug->SaveProgramAsFXP(fileName.Get());
+                        mPlug->ModifyCurrentPreset();
                         mPlug->SaveBankAsFXB(fileName.Get());
+                        mLabel.Set(fileName.get_filepart());
                         SetDirty(false);
                         break;
                     }
