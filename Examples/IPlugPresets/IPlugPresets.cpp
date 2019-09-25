@@ -6,8 +6,9 @@
 IPlugPresets::IPlugPresets(const InstanceInfo& info)
 : Plugin(info, MakeConfig(kNumParams, kNumPrograms))
 {
-    initParams(*this);
-    createPresets(*this);
+    GetParam(kParamMode)->InitEnum("", 0, 4, "", IParam::kFlagsNone, "", "preset one", "preset two", "preset three", "preset four");
+    GetParam(kParamMultislider)->InitDouble("", 0.5, 0., 1., 0.01, "");
+    createPresets();
     
 #if IPLUG_EDITOR // All UI methods and member variables should be within an IPLUG_EDITOR guard, should you want distributed UI
     mMakeGraphicsFunc = [&]() {
@@ -46,7 +47,7 @@ IPlugPresets::IPlugPresets(const InstanceInfo& info)
         };
         
         pGraphics->AttachControl(new IVMultiSliderControl<16>(nextCell(), "MultiSlider", DEFAULT_STYLE, kParamMultislider, EDirection::Vertical, 0., 1.6), kNoTag, "vcontrols");
-        pGraphics->AttachControl(new IVSliderControl(nextCell(), kParamSlider, "Slider"), kNoTag, "vcontrols");
+        pGraphics->AttachControl(new IVMeterControl<1>(nextCell().GetMidHPadded(20), "Meter"), kNoTag, "vcontrols");
         
         auto button1action = [pGraphics](IControl* pCaller){
             SplashClickActionFunc(pCaller);
@@ -72,14 +73,32 @@ IPlugPresets::IPlugPresets(const InstanceInfo& info)
 #endif
 }
 
+void IPlugPresets::createPresets() {
+
+    MakePreset("preset one", 1/16., 2/16., 3/16., 4/16., 5/16., 6/16., 7/16., 8/16., 9/16., 10/16., 11/16., 12/16., 13/16., 14/16., 15/16., 1., 0);
+    MakePreset("preset two", 15/16., 14/16., 13/16., 12/16., 11/16., 10/16., 9/16., 8/16., 7/16., 6/16., 5/16., 4/16., 3/16., 2/16., 1/16., 0., 1);
+    MakePreset("preset three", 0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 2);
+    MakePreset("preset four", 0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0., 3);
+
+}
+
 #if IPLUG_DSP
+
 void IPlugPresets::OnIdle()
 {
-    
+    mMeterSender.TransmitData(*this);
 }
 
 void IPlugPresets::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 {
+    for (int s = 0; s < nFrames; s++) {
+        static double phase = 0.;
+        phase += 0.0001;
+        outputs[0][s] = sin(phase);
+        outputs[1][s] = 0.;
+    }
+    mMeterSender.ProcessBlock(outputs, nFrames);
+    
     for (int s = 0; s < nFrames; s++) {
         outputs[0][s] = 0.;
         outputs[1][s] = 0.;

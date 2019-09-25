@@ -5,7 +5,6 @@
 //#include "IGraphicsConstants.h"
 enum EParams
 {
-    kParamSlider = 0,
     kParamMultislider,
     kParamMultislider2,
     kParamMultislider3,
@@ -30,6 +29,7 @@ enum ECtrlTags
 {
     kCtrlTagCaption,
     kCtrlTagBrowser,
+    kCtrlTagMeter,
     kCtrlTags
 };
 
@@ -37,26 +37,6 @@ using namespace iplug;
 using namespace igraphics;
 
 const int kNumPrograms = 4;
-
-void initParams(IEditorDelegate& plugin) {
-    plugin.GetParam(kParamSlider)->InitDouble("", 0.5, 0., 1.0, 0.01, "");
-    plugin.GetParam(kParamMode)->InitEnum("", 0, 4, "", IParam::kFlagsNone, "", "preset one", "preset two", "preset three", "preset four");
-    plugin.GetParam(kParamMultislider)->InitDouble("", 0.5, 0., 1., 0.01, "");
-}
-
-void createPresets(Plugin& plugin) {
-//#ifdef APP_API
-//
-//    
-//
-//#else
-    plugin.MakePreset("preset one", 0.5, 1/16., 2/16., 3/16., 4/16., 5/16., 6/16., 7/16., 8/16., 9/16., 10/16., 11/16., 12/16., 13/16., 14/16., 15/16., 1., 0);
-    plugin.MakePreset("preset two", 0.2, 15/16., 14/16., 13/16., 12/16., 11/16., 10/16., 9/16., 8/16., 7/16., 6/16., 5/16., 4/16., 3/16., 2/16., 1/16., 0., 1);
-    plugin.MakePreset("preset three", 0.8, 0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 2);
-    plugin.MakePreset("preset four", 1.0, 0., 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0., 3);
-//#endif
-}
-
 
 class FileBrowser : public IDirBrowseControlBase
 {
@@ -192,5 +172,7 @@ public:
     void OnPopupMenuSelection(IPopupMenu* pSelectedMenu, int valIdx);
 private:
     bool loaded = false;
+    void createPresets();
+    IVMeterControl<1>::Sender mMeterSender { kCtrlTagMeter };
 #endif
 };
