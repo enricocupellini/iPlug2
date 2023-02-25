@@ -50,8 +50,9 @@ const char* IPlugWAM::init(uint32_t bufsize, uint32_t sr, void* pDesc)
   json.Append("]\n}");
 
   //TODO: correct place? - do we need a WAM reset message?
-  OnReset();
   OnParamReset(kReset);
+  OnReset();
+  postMessage("StartIdleTimer", nullptr, nullptr);
 
   return json.Get();
 }
@@ -64,42 +65,44 @@ void IPlugWAM::onProcess(WAM::AudioBus* pAudio, void* pData)
   SetChannelConnections(ERoute::kOutput, 0, MaxNChannels(ERoute::kOutput), true); //TODO: go elsewhere
   AttachBuffers(ERoute::kInput, 0, NChannelsConnected(ERoute::kInput), pAudio->inputs, blockSize);
   AttachBuffers(ERoute::kOutput, 0, NChannelsConnected(ERoute::kOutput), pAudio->outputs, blockSize);
+  
+  ENTER_PARAMS_MUTEX
   ProcessBuffers((float) 0.0f, blockSize);
-  
-  //emulate IPlugAPIBase::OnTimer - should be called on the main thread - how to do that in audio worklet processor?
-  if(mBlockCounter == 0)
-  {
-    while(mParamChangeFromProcessor.ElementsAvailable())
-    {
-      ParamTuple p;
-      mParamChangeFromProcessor.Pop(p);
-      SendParameterValueFromDelegate(p.idx, p.value, false);
-    }
-    
-    while (mMidiMsgsFromProcessor.ElementsAvailable())
-    {
-      IMidiMsg msg;
-      mMidiMsgsFromProcessor.Pop(msg);
-      SendMidiMsgFromDelegate(msg);
-    }
-        
-    OnIdle();
-    
-    mBlockCounter = 8; // 8 * 128 samples = 23ms @ 44100 sr
-  }
-  
-  mBlockCounter--;
+  LEAVE_PARAMS_MUTEX
 }
 
+void IPlugWAM::OnEditorIdleTick()
+{
+  while(mParamChangeFromProcessor.ElementsAvailable())
+  {
+    ParamTuple p;
+    mParamChangeFromProcessor.Pop(p);
+    SendParameterValueFromDelegate(p.idx, p.value, false);
+  }
+
+  while (mMidiMsgsFromProcessor.ElementsAvailable())
+  {
+    IMidiMsg msg;
+    mMidiMsgsFromProcessor.Pop(msg);
+    SendMidiMsgFromDelegate(msg);
+  }
+
+  OnIdle();
+}
+
+//WAM onMessageN
 void IPlugWAM::onMessage(char* verb, char* res, double data)
 {
-  if(strcmp(verb, "SMMFUI") == 0)
+  if(strcmp(verb, "TICK") == 0) // special case for DSP OnIdle()
+  {
+    OnEditorIdleTick();
+  }
+  else if(strcmp(verb, "SMMFUI") == 0)
   {
     uint8_t data[3];
     char* pChar = strtok(res, ":");
     int i = 0;
-    while (pChar != nullptr)
-    {
+    while (pChar != nullptr) {
       data[i++] = atoi(pChar);
       pChar = strtok(nullptr, ":");
     }
@@ -107,26 +110,40 @@ void IPlugWAM::onMessage(char* verb, char* res, double data)
     IMidiMsg msg = {0, data[0], data[1], data[2]};
     ProcessMidiMsg(msg); // TODO: should queue to mMidiMsgsFromEditor?
   }
+  else if(strcmp(verb, "SAMFUI") == 0) // SAMFUI
+  {
+    int data[2] = {-1, -1};
+    char* pChar = strtok(res, ":");
+    int i = 0;
+    while (pChar != nullptr) {
+      data[i++] = atoi(pChar);
+      pChar = strtok(nullptr, ":");
+    }
+
+    OnMessage(data[0], data[1], sizeof(double), reinterpret_cast<void*>(&data));
+  }
 }
 
+//WAM onMessageS
 void IPlugWAM::onMessage(char* verb, char* res, char* str)
 {
 }
 
+//WAM onMessageA
 void IPlugWAM::onMessage(char* verb, char* res, void* pData, uint32_t size)
 {
   if(strcmp(verb, "SAMFUI") == 0)
   {
     int pos = 0;
     IByteStream stream(pData, size);
-    int messageTag;
-    int controlTag;
+    int msgTag;
+    int ctrlTag;
     int dataSize;
-    pos = stream.Get(&messageTag, pos);
-    pos = stream.Get(&controlTag, pos);
+    pos = stream.Get(&msgTag, pos);
+    pos = stream.Get(&ctrlTag, pos);
     pos = stream.Get(&dataSize, pos);
     
-    OnMessage(messageTag, controlTag, dataSize, stream.GetData() + (sizeof(int) * 3));
+    OnMessage(msgTag, ctrlTag, dataSize, stream.GetData() + (sizeof(int) * 3));
   }
   else if(strcmp(verb, "SSMFUI") == 0)
   {
@@ -172,22 +189,22 @@ void IPlugWAM::onSysex(byte* pData, uint32_t size)
   postMessage("SSMFD", dataStr.Get(), "");
 }
 
-void IPlugWAM::SendControlValueFromDelegate(int controlTag, double normalizedValue)
+void IPlugWAM::SendControlValueFromDelegate(int ctrlTag, double normalizedValue)
 {
   WDL_String propStr;
   WDL_String dataStr;
 
-  propStr.SetFormatted(16, "%i", controlTag);
+  propStr.SetFormatted(16, "%i", ctrlTag);
   dataStr.SetFormatted(16, "%f", normalizedValue);
 
   // TODO: in the future this will be done via shared array buffer
   postMessage("SCVFD", propStr.Get(), dataStr.Get());
 }
 
-void IPlugWAM::SendControlMsgFromDelegate(int controlTag, int messageTag, int dataSize, const void* pData)
+void IPlugWAM::SendControlMsgFromDelegate(int ctrlTag, int msgTag, int dataSize, const void* pData)
 {
   WDL_String propStr;
-  propStr.SetFormatted(16, "%i:%i", controlTag, messageTag);
+  propStr.SetFormatted(16, "%i:%i", ctrlTag, msgTag);
   
   // TODO: in the future this will be done via shared array buffer
   postMessage("SCMFD", propStr.Get(), pData, (uint32_t) dataSize);
@@ -204,10 +221,10 @@ void IPlugWAM::SendParameterValueFromDelegate(int paramIdx, double value, bool n
   postMessage("SPVFD", propStr.Get(), dataStr.Get());
 }
 
-void IPlugWAM::SendArbitraryMsgFromDelegate(int messageTag, int dataSize, const void* pData)
+void IPlugWAM::SendArbitraryMsgFromDelegate(int msgTag, int dataSize, const void* pData)
 {
   WDL_String propStr;
-  propStr.SetFormatted(16, "%i", messageTag);
+  propStr.SetFormatted(16, "%i", msgTag);
   
   // TODO: in the future this will be done via shared array buffer
   postMessage("SAMFD", propStr.Get(), pData, (uint32_t) dataSize);

@@ -123,26 +123,27 @@ INT_PTR SWELLAppMain(int msg, INT_PTR parm1, INT_PTR parm2); // to be implemente
 };
 #endif
 
-#define SWELLAPP_ONLOAD 0x0001 // initialization of app vars etc
-#define SWELLAPP_LOADED 0x0002 // create dialogs etc
-#define SWELLAPP_DESTROY 0x0003 // about to destroy (cleanup etc)
-#define SWELLAPP_SHOULDDESTROY 0x0004 // return 0 to allow app to terminate, >0 to prevent
 
-#define SWELLAPP_OPENFILE 0x0050 // parm1= (const char *)string, return >0 if allowed
-#define SWELLAPP_NEWFILE 0x0051 // new file, return >0 if allowed
-#define SWELLAPP_SHOULDOPENNEWFILE 0x0052 // allow opening new file? >0 if allowed
-
-#define SWELLAPP_ONCOMMAND 0x0099 // parm1 = (int) command ID, parm2 = (id) sender 
-#define SWELLAPP_PROCESSMESSAGE 0x0100 // parm1=(MSG *)msg (loosely), parm2= (NSEvent *) the event . return >0 to eat
-
-#define SWELLAPP_ACTIVATE 0x1000  // parm1 = (bool) isactive. return nonzero to prevent WM_ACTIVATEAPP from being broadcasted
-//
-
-
-
+#if defined(__APPLE__) && !defined(SWELL_USE_OBJC_BOOL)
+  #include <AvailabilityMacros.h>
+  // this may be safe to always use, but for now only use when using a very very modern SDK
+  #ifdef MAC_OS_X_VERSION_10_16
+    #define SWELL_USE_OBJC_BOOL
+  #endif
+#endif
 
 // basic types
-typedef signed char BOOL;
+#ifdef SWELL_USE_OBJC_BOOL
+  #include <objc/objc.h>
+  #ifndef __OBJC__
+    #undef NO
+    #undef YES
+    #undef Nil
+    #undef nil
+  #endif
+#else
+  typedef signed char BOOL;
+#endif
 typedef unsigned char BYTE;
 typedef unsigned short WORD;
 typedef unsigned int DWORD;
@@ -420,6 +421,13 @@ typedef struct HTREEITEM__ *HTREEITEM;
 
 #define TVN_FIRST               (0U-400U)       // treeview
 #define TVN_SELCHANGED          (TVN_FIRST-2)
+#define TVN_ITEMEXPANDING       (TVN_FIRST-5)
+
+// swell-extension: WM_MOUSEMOVE set via capture in TVN_BEGINDRAG can return:
+//   -1 = drag not possible
+//   -2 = destination at end of list
+//   (HTREEITEM) = will end up before this item
+#define TVN_BEGINDRAG           (TVN_FIRST-7) 
 
 #define TVI_ROOT                ((HTREEITEM)0xFFFF0000)
 #define TVI_FIRST               ((HTREEITEM)0xFFFF0001)
@@ -635,13 +643,22 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
  */
 #define MB_OK 0
 #define MB_OKCANCEL 1
+#define MB_ABORTRETRYIGNORE 2
 #define MB_YESNOCANCEL 3
 #define MB_YESNO 4
 #define MB_RETRYCANCEL 5
 
+#define MB_DEFBUTTON1 0
+#define MB_DEFBUTTON2 0x00000100
+#define MB_DEFBUTTON3 0x00000200
+
 #define MB_ICONERROR 0
 #define MB_ICONSTOP 0
 #define MB_ICONINFORMATION 0
+#define MB_ICONWARNING 0
+#define MB_ICONQUESTION 0
+#define MB_TOPMOST 0
+#define MB_ICONEXCLAMATION 0
 
 #define IDOK                1
 #define IDCANCEL            2
@@ -658,6 +675,7 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
 #define GW_OWNER            4
 #define GW_CHILD            5
 
+#define GWL_HWNDPARENT      (-25)
 #define GWL_USERDATA        (-21)
 #define GWL_ID              (-12)
 #define GWL_STYLE           (-16) // only supported for BS_ for now I think
@@ -679,6 +697,8 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
 #define WS_THICKFRAME   0x00040000L
 #define WS_GROUP        0x00020000L
 #define WS_TABSTOP      0x00010000L
+
+#define TVS_DISABLEDRAGDROP 0x10
 
 #define WS_BORDER 0 // ignored for now
 
@@ -719,6 +739,7 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
 #define LB_GETSELCOUNT          0x0190
 #define LB_GETITEMDATA          0x0199
 #define LB_SETITEMDATA          0x019A
+#define LB_FINDSTRINGEXACT      0x01A2
 
 #define TBM_GETPOS              (WM_USER)
 #define TBM_SETTIC              (WM_USER+4)
@@ -742,6 +763,7 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
 #define NM_CLICK                (NM_FIRST-2)    // uses NMCLICK struct
 #define NM_DBLCLK               (NM_FIRST-3)
 #define NM_RCLICK               (NM_FIRST-5)    // uses NMCLICK struct
+#define NM_CUSTOMDRAW           (NM_FIRST-12)
 
 
 #define LVSIL_STATE 1
@@ -793,6 +815,7 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
 #define LVN_GETDISPINFO         (LVN_FIRST-50)
 
 #define LVS_EX_GRIDLINES 0x01
+#define LVS_EX_SUBITEMIMAGES 0x02
 #define LVS_EX_HEADERDRAGDROP 0x10
 #define LVS_EX_FULLROWSELECT 0x20 // ignored for now (enabled by default on OSX)
 
@@ -907,6 +930,8 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
 #define WM_MOVE                         0x0003
 #define WM_SIZE                         0x0005
 #define WM_ACTIVATE                     0x0006
+#define WM_SETFOCUS                     0x0007
+#define WM_KILLFOCUS                    0x0008
 #define WM_SETREDRAW                    0x000B // implemented on macOS NSTableViews, maybe elsewhere?
 #define WM_SETTEXT			0x000C // not implemented on OSX, used internally on Linux
 #define WM_PAINT                        0x000F
@@ -953,7 +978,6 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
 #define WM_INITDIALOG                   0x0110
 #define WM_COMMAND                      0x0111
 #define WM_SYSCOMMAND                   0x0112
-#define SC_CLOSE        0xF060
 #define WM_TIMER                        0x0113
 #define WM_HSCROLL                      0x0114
 #define WM_VSCROLL                      0x0115
@@ -975,8 +999,12 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
 #define WM_MOUSELAST                    0x020A
 #define WM_CAPTURECHANGED               0x0215
 #define WM_DROPFILES                    0x0233
+#define WM_SWELL_EXTENDED               0x0399 /* wParam = message specific type */
 #define WM_USER                         0x0400
 
+#define SC_CLOSE        0xF060
+
+#define HTTRANSPARENT (-1)
 #define HTCAPTION 2
 #define HTBOTTOMRIGHT 17
 
@@ -999,6 +1027,7 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
 #define EM_GETSEL               0xF0B0
 #define EM_SETSEL               0xF0B1
 #define EM_SCROLL               0xF0B5
+#define EM_REPLACESEL           0xF0C2
 #define EM_SETPASSWORDCHAR      0xF0CC
 
 #define SB_HORZ             0
@@ -1091,6 +1120,25 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
 #define SIZE_MAXSHOW        3
 #define SIZE_MAXHIDE        4
 
+typedef struct tagNMLVCUSTOMDRAW
+{
+  struct {
+    NMHDR hdr;
+    DWORD dwDrawStage;
+    HDC hdc; // not implemented
+    RECT rc; // not implemented
+    DWORD dwItemSpec;
+    UINT uItemState; // not implemented
+    LPARAM lItemlParam; // not implemented
+  } nmcd;
+
+  COLORREF clrText, clrTextBk;
+  int iSubItem;
+} NMLVCUSTOMDRAW, *LPNMLVCUSTOMDRAW;
+// only currently used by listviews for color override
+#define CDDS_PREPAINT (0x00001)
+#define CDDS_ITEM     (0x10000)
+#define CDDS_ITEMPREPAINT (CDDS_ITEM | CDDS_PREPAINT)
 
 #ifndef MAKEINTRESOURCE
 #define MAKEINTRESOURCE(x) ((const char *)(UINT_PTR)(x))         
@@ -1278,6 +1326,8 @@ __attribute__ ((visibility ("default"))) BOOL WINAPI DllMain(HINSTANCE hInstDLL,
 #define GHND (GMEM_MOVEABLE|GM_ZEROINIT)
 #define GPTR (GMEM_FIXED|GMEM_ZEROINIT)
 
+#define CF_TEXT (1)
+#define CF_HDROP (2)
 
 #define _MCW_RC         0x00000300              /* Rounding Control */
 #define _RC_NEAR        0x00000000              /*   near */
@@ -1299,6 +1349,7 @@ extern struct SWELL_MenuResourceIndex *SWELL_curmodule_menuresource_head;
 #define SM_CYSCREEN             1
 #define SM_CXVSCROLL            2
 #define SM_CYHSCROLL            3
+#define SM_CYMENU               15
 #define SM_CYVSCROLL            20
 #define SM_CXHSCROLL            21
 
@@ -1316,7 +1367,6 @@ extern struct SWELL_MenuResourceIndex *SWELL_curmodule_menuresource_head;
 #define SM_CYICON               12
 #define SM_CXCURSOR             13
 #define SM_CYCURSOR             14
-#define SM_CYMENU               15
 #define SM_CXFULLSCREEN         16
 #define SM_CYFULLSCREEN         17
 #define SM_CYKANJIWINDOW        18
@@ -1377,5 +1427,22 @@ typedef struct _COPYDATASTRUCT
   PVOID     lpData;
 } COPYDATASTRUCT, *PCOPYDATASTRUCT;
 
+typedef void *HMONITOR;
+
+typedef struct _MONITORINFO {
+  DWORD cbSize;
+  RECT rcMonitor, rcWork;
+  DWORD dwFlags;
+} MONITORINFO, *LPMONITORINFO;
+
+
+typedef struct _MONITORINFOEX {
+  DWORD cbSize;
+  RECT rcMonitor, rcWork;
+  DWORD dwFlags;
+  char szDevice[256];
+} MONITORINFOEX, *LPMONITORINFOEX;
+
+typedef BOOL (*MONITORENUMPROC)(HMONITOR,HDC,LPRECT,LPARAM);
 
 #endif //_WDL_SWELL_H_TYPES_DEFINED_

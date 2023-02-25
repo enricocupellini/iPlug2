@@ -29,8 +29,8 @@ class TestMPSControl : public IKnobControlBase
                      , public IBitmapBase
 {
 public:
-  TestMPSControl(const IRECT& bounds, const IBitmap& bitmap)
-  : IKnobControlBase(bounds)
+  TestMPSControl(const IRECT& bounds, const IBitmap& bitmap, int paramIdx)
+  : IKnobControlBase(bounds, paramIdx)
   , IBitmapBase(bitmap)
   {
     SetTooltip("TestMPSControl");
@@ -46,8 +46,7 @@ public:
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
-    if(mod.R)
-      GetUI()->CreatePopupMenu(*this, mMenu, x, y);
+    GetUI()->CreatePopupMenu(*this, mMenu, x, y);
     
     SetDirty(false);
   }
@@ -61,14 +60,15 @@ public:
 private:
   int mKernelType = 0;
   NVGframebuffer* mFBO = nullptr;
-  IPopupMenu mMenu {0, false, {"MPSImageGaussianBlur", "MPSImageSobel", "MPSImageThresholdToZero"}};
+  IPopupMenu mMenu {"MPS Type", 0, false, {"MPSImageGaussianBlur", "MPSImageSobel", "MPSImageThresholdToZero"}};
 };
 
 #else
+/** Control to test IGraphicsNanoVG with Metal Performance Shaders */
 class TestMPSControl : public IControl
 {
 public:
-  TestMPSControl(IRECT rect, const IBitmap& bmp)
+  TestMPSControl(IRECT rect, const IBitmap& bmp, int paramIdx)
   : IControl(rect)
   {
     SetTooltip("TestMPSControl");

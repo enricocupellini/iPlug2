@@ -31,18 +31,15 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    if (g.HasPathSupport())
-    {
-      double cr = GetValue() * (mRECT.H() / 2.0);
-      g.PathRoundRect(mRECT.GetPadded(-2), cr);
-      IFillOptions fillOptions;
-      IStrokeOptions strokeOptions;
-      fillOptions.mPreserve = true;
-      g.PathFill(mPattern, fillOptions);
-      g.PathStroke(IColor(255, 0, 0, 0), 3, strokeOptions);
-    }
-    else
-      g.DrawText(mText, "UNSUPPORTED", mRECT);
+    g.DrawDottedRect(COLOR_BLACK, mRECT);
+
+    float cr = static_cast<float>(GetValue()) * (mRECT.H() / 2.f);
+    g.PathRoundRect(mRECT.GetPadded(-2.f), cr);
+    IFillOptions fillOptions;
+    IStrokeOptions strokeOptions;
+    fillOptions.mPreserve = true;
+    g.PathFill(mPattern, fillOptions);
+    g.PathStroke(IColor(255, 0, 0, 0), 3, strokeOptions);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
@@ -50,7 +47,14 @@ public:
     RandomiseGradient();
     SetDirty(false);
   }
+  
+  void OnResize() override
+  {
+    RandomiseGradient();
+  }
 
+private:
+  
   void RandomiseGradient()
   {
     //IPattern tmp(EPatternType::Linear);
@@ -60,19 +64,18 @@ public:
     if (std::rand() & 0x100)
       tmp = IPattern::CreateRadialGradient(mRECT.MW(), mRECT.MH(), mRECT.MH());
     else
-      tmp = IPattern::CreateLinearGradient(mRECT.L, mRECT.MH(), mRECT.L + mRECT.W() * 0.5, mRECT.MH());
+      tmp = IPattern::CreateLinearGradient(mRECT.L, mRECT.MH(), mRECT.L + mRECT.W() * 0.5f, mRECT.MH());
 
     tmp.mExtend = (std::rand() & 0x10) ? ((std::rand() & 0x1000) ? EPatternExtend::None : EPatternExtend::Pad) : ((std::rand() & 0x1000) ? EPatternExtend::Repeat : EPatternExtend::Reflect);
 
-    tmp.AddStop(IColor::GetRandomColor(), 0.0);
-    tmp.AddStop(IColor::GetRandomColor(), 0.1);
-    tmp.AddStop(IColor::GetRandomColor(), 0.4);
-    tmp.AddStop(IColor::GetRandomColor(), 0.6);
-    tmp.AddStop(IColor::GetRandomColor(), 1.0);
+    tmp.AddStop(IColor::GetRandomColor(), 0.0f);
+    tmp.AddStop(IColor::GetRandomColor(), 0.1f);
+    tmp.AddStop(IColor::GetRandomColor(), 0.4f);
+    tmp.AddStop(IColor::GetRandomColor(), 0.6f);
+    tmp.AddStop(IColor::GetRandomColor(), 1.0f);
 
     mPattern = tmp;
   }
 
-private:
   IPattern mPattern = IPattern(EPatternType::Linear);
 };

@@ -7,6 +7,7 @@
  
  ==============================================================================
 */
+#pragma once
 
 #include "denormal.h"
 #include "IPlugConstants.h"
@@ -21,21 +22,23 @@ private:
   T mOutM1[NC];
 
 public:
-  LogParamSmooth(double timeMs = 5., T initalValue = 0.)
+  LogParamSmooth(double timeMs = 5., T initialValue = 0.)
   {
     for (auto i = 0; i < NC; i++)
     {
-      mOutM1[i] = initalValue;
+      mOutM1[i] = initialValue;
     }
     
-    SetSmoothTime(2., DEFAULT_SAMPLE_RATE);
+    SetSmoothTime(timeMs, DEFAULT_SAMPLE_RATE);
   }
 
   // only works for NC = 1
   inline T Process(T input)
   {
     mOutM1[0] = (input * mB) + (mOutM1[0] * mA);
-    denormalFix(&mOutM1[0]);
+#ifndef OS_IOS
+    denormal_fix(&mOutM1[0]);
+#endif
     return mOutM1[0];
   }
 
@@ -73,7 +76,9 @@ public:
       for (auto c = 0; c < NC; c++)
       {
         T output = (inputs[channelOffset + c] * b) + (mOutM1[c] * a);
+#ifndef OS_IOS
         denormal_fix(&output);
+#endif
         mOutM1[c] = output;
         outputs[channelOffset + c][s] = output;
       }
@@ -81,5 +86,26 @@ public:
   }
 
 } WDL_FIXALIGN;
+
+template<typename T>
+class SmoothedGain
+{
+public:
+  void ProcessBlock(T** inputs, T** outputs, int nChans, int nFrames, double gainValue)
+  {
+    for (auto s = 0; s < nFrames; ++s)
+    {
+      const double smoothedGain = mSmoother.Process(gainValue);
+      
+      for (auto c = 0; c < nChans; c++)
+      {
+        outputs[c][s] = inputs[c][s] * smoothedGain;
+      }
+    }
+  }
+  
+private:
+  LogParamSmooth<double, 1> mSmoother;
+};
 
 END_IPLUG_NAMESPACE

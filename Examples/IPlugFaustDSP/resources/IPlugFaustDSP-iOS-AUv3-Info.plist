@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>IPlugFaustDSPAppExtension</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.AcmeInc.app.IPlugFaustDSP.AUv3</string>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -32,7 +32,7 @@
 					<key>description</key>
 					<string>IPlugFaustDSP</string>
 					<key>factoryFunction</key>
-					<string>IPlugAUViewController</string>
+					<string>IPlugAUViewController_vIPlugFaustDSP</string>
 					<key>manufacturer</key>
 					<string>Acme</string>
 					<key>name</key>
@@ -44,6 +44,7 @@
 					<key>tags</key>
 					<array>
 						<string>Effects</string>
+						<string>size:{600,600}</string>
 					</array>
 					<key>type</key>
 					<string>aumf</string>

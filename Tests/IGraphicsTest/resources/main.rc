@@ -154,6 +154,8 @@ BEGIN
     "ROBOTO_FN TTF ROBOTO_FN\r\n"
     "MONTSERRAT_FN TTF MONTSERRAT_FN\r\n"
     "SMILEY_FN PNG SMILEY_FN\r\n"
+    "SRC_FN PNG SRC_FN\r\n"
+    "DST_FN PNG DST_FN\r\n"
     "\r\n"
     "\0"
 END
@@ -214,7 +216,7 @@ BEGIN
             VALUE "InternalName", "IGraphicsTest"
             VALUE "ProductName", "IGraphicsTest"
             VALUE "CompanyName", "AcmeInc"
-            VALUE "LegalCopyright", "Copyright 2019 Acme Inc"
+            VALUE "LegalCopyright", "Copyright 2020 Acme Inc"
             VALUE "LegalTrademarks", "VST is a trademark of Steinberg Media Technologies GmbH, Audio Unit is a trademark of Apple, Inc."
         END
     END
@@ -241,6 +243,7 @@ ROBOTO_FN TTF ROBOTO_FN
 MONTSERRAT_FN TTF MONTSERRAT_FN
 SMILEY_FN PNG SMILEY_FN
 IPLUG_FN PNG IPLUG_FN
-
+SRC_FN PNG SRC_FN
+DST_FN PNG DST_FN
 /////////////////////////////////////////////////////////////////////////////
 #endif    // not APSTUDIO_INVOKED

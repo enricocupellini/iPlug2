@@ -116,7 +116,7 @@ public:
 
       if(mNewText)
       {
-        g.DrawText(IText((rand() % 50) + 10, COLOR_WHITE), mStr.Get(), mX, mY);
+        g.DrawText(IText(static_cast<float>((rand() % 30) + 10), COLOR_WHITE), mStr.Get(), mX, mY);
         mNewText = false;
       }
 
@@ -127,7 +127,7 @@ public:
     }
     else
     {
-      g.StartLayer(mRECT);
+      g.StartLayer(this, mRECT);
       g.DrawText(IText(20, COLOR_WHITE), mStr.Get(), mX, mY);
     }
 
@@ -138,8 +138,14 @@ public:
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
-    mLayer->Invalidate();
-    SetDirty(false);
+    mStr.SetFormatted(64, "MouseDown: L:%i, R:%i, A:%i, C:%i. S:%i", mod.L, mod.R, mod.A, mod.C, mod.S);
+    StrUpdated(x, y);
+  }
+  
+  void OnMouseUp(float x, float y, const IMouseMod& mod) override
+  {
+    mStr.SetFormatted(64, "MouseUp: L:%i, R:%i, A:%i, C:%i. S:%i", mod.L, mod.R, mod.A, mod.C, mod.S);
+    StrUpdated(x, y);
   }
 
   bool OnKeyDown(float x, float y, const IKeyPress& key) override
@@ -151,18 +157,23 @@ public:
       mStr.Set(key.utf8);
     }
     
-    mNewText = true;
-    SetAnimation(DefaultAnimationFunc);
-    StartAnimation(5000.);
-    mX = x;
-    mY = y;
-
-    SetDirty(false);
-
+    StrUpdated(x, y);
+    
     return true;
   }
 
 private:
+  void StrUpdated(float x, float y)
+  {
+    mNewText = true;
+    SetAnimation(DefaultAnimationFunc);
+    StartAnimation(5000);
+    mX = x;
+    mY = y;
+
+    SetDirty(false);
+  }
+  
   bool mNewText = false;
   float mX = 0.;
   float mY = 0.;

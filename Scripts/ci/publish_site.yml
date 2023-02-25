@@ -13,17 +13,13 @@ jobs:
 
   strategy:
     matrix:
-      NANOVG:
-        graphics: 'NANOVG'
-      # CAIRO:
-      #   graphics: 'CAIRO'
-      # LICE:
-      #   graphics: 'LICE'
-      # AGG:
-      #   graphics: 'AGG'
+      SKIA:
+        graphics: 'SKIA'
+      # NANOVG:
+      #   graphics: 'NANOVG'
 
   pool:
-    vmImage: 'ubuntu-16.04'
+    vmImage: 'ubuntu-latest'
 
   steps:
   - checkout: none
@@ -47,11 +43,12 @@ jobs:
     and
     (
       in(dependencies.BUILD_WEB_PROJECTS.result, 'Succeeded'),
-      eq(variables.publish_pages, true)
+      eq(variables.publish_pages, true),
+      ne(variables['Build.Reason'], 'PullRequest')
     )
 
   pool:
-    vmImage: 'ubuntu-16.04'
+    vmImage: 'ubuntu-latest'
 
   steps:
   - checkout: none
@@ -61,6 +58,7 @@ jobs:
     displayName: Clone website repo
     env:
       GITHUB_PAT: $(GITHUB_PAT)
+      PUBLISH_USER: $(PUBLISH_USER)
 
   - template: projects.yml
     parameters:

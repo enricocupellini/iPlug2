@@ -97,8 +97,11 @@ END_IPLUG_NAMESPACE
 #ifdef OS_WIN
   #define EXPORT __declspec(dllexport)
   #define BUNDLE_ID ""
-#elif defined OS_MAC || defined OS_IOS
+#elif defined OS_MAC
   #define BUNDLE_ID BUNDLE_DOMAIN "." BUNDLE_MFR "." API_EXT "." BUNDLE_NAME API_EXT2
+  #define EXPORT __attribute__ ((visibility("default")))
+#elif defined OS_IOS
+  #define BUNDLE_ID BUNDLE_DOMAIN "." BUNDLE_MFR "." BUNDLE_NAME API_EXT2
   #define EXPORT __attribute__ ((visibility("default")))
 #elif defined OS_LINUX
   //TODO:
@@ -206,6 +209,22 @@ END_IPLUG_NAMESPACE
   #define PLUG_HEIGHT 500
 #endif
 
+#ifndef PLUG_MIN_WIDTH
+  #define PLUG_MIN_WIDTH (PLUG_WIDTH / 2)
+#endif
+
+#ifndef PLUG_MIN_HEIGHT
+  #define PLUG_MIN_HEIGHT (PLUG_HEIGHT / 2)
+#endif
+
+#ifndef PLUG_MAX_WIDTH
+  #define PLUG_MAX_WIDTH (PLUG_WIDTH * 2)
+#endif
+
+#ifndef PLUG_MAX_HEIGHT
+  #define PLUG_MAX_HEIGHT (PLUG_HEIGHT * 2)
+#endif
+
 #ifndef PLUG_FPS
   #pragma message WARN("PLUG_FPS not defined, setting to 60")
   #define PLUG_FPS 60
@@ -214,6 +233,11 @@ END_IPLUG_NAMESPACE
 #ifndef PLUG_SHARED_RESOURCES
   #pragma message WARN("PLUG_SHARED_RESOURCES not defined, setting to 0")
   #define PLUG_SHARED_RESOURCES 0
+#else
+  #ifndef SHARED_RESOURCES_SUBPATH
+    #pragma message WARN("SHARED_RESOURCES_SUBPATH not defined, setting to PLUG_NAME")
+    #define SHARED_RESOURCES_SUBPATH PLUG_NAME
+  #endif
 #endif
 
 #ifdef IPLUG_VST3

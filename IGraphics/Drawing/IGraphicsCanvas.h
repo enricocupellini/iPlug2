@@ -15,16 +15,19 @@
 
 #include "IPlugPlatform.h"
 
-#include "IGraphicsPathBase.h"
+#include "IGraphics.h"
 
 using namespace emscripten;
 
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
+/** Convert IColor to std::string for Canvas */
+std::string CanvasColor(const IColor& color, float alpha = 1.0);
+
 /** IGraphics draw class HTML5 canvas
 * @ingroup DrawClasses */
-class IGraphicsCanvas : public IGraphicsPathBase
+class IGraphicsCanvas : public IGraphics
 {
 private:
   class Bitmap;
@@ -34,7 +37,7 @@ public:
   IGraphicsCanvas(IGEditorDelegate& dlg, int w, int h, int fps, float scale);
   ~IGraphicsCanvas();
 
-  const char* GetDrawingAPIStr() override { return "HTML5 Canvas"; }
+  const char* GetDrawingAPIStr() override { return "Canvas2D"; }
 
   void DrawBitmap(const IBitmap& bitmap, const IRECT& bounds, int srcX, int srcY, const IBlend* pBlend) override;
 
@@ -57,7 +60,8 @@ public:
     
 protected:
   APIBitmap* LoadAPIBitmap(const char* fileNameOrResID, int scale, EResourceLocation location, const char* ext) override;
-  APIBitmap* CreateAPIBitmap(int width, int height, int scale, double drawScale) override;
+  APIBitmap* LoadAPIBitmap(const char* name, const void* pData, int dataSize, int scale) override;
+  APIBitmap* CreateAPIBitmap(int width, int height, float scale, double drawScale, bool cacheable = false) override;
 
   bool LoadAPIFont(const char* fontID, const PlatformFontPtr& font) override;
 
@@ -69,7 +73,7 @@ protected:
   void GetLayerBitmapData(const ILayerPtr& layer, RawBitmapData& data) override;
   void ApplyShadowMask(ILayerPtr& layer, RawBitmapData& mask, const IShadow& shadow) override;
 
-  void DoMeasureText(const IText& text, const char* str, IRECT& bounds) const override;
+  float DoMeasureText(const IText& text, const char* str, IRECT& bounds) const override;
   void DoDrawText(const IText& text, const char* str, const IRECT& bounds, const IBlend* pBlend) override;
     
 private:
@@ -86,8 +90,8 @@ private:
   bool CompareFontMetrics(const char* style, const char* font1, const char* font2);
   bool FontExists(const char* font, const char* style);
     
-  double XTranslate()  { return mLayers.empty() ? 0 : -mLayers.top()->Bounds().L; }
-  double YTranslate()  { return mLayers.empty() ? 0 : -mLayers.top()->Bounds().T; }
+  double XTranslate() { return mLayers.empty() ? 0 : -mLayers.top()->Bounds().L; }
+  double YTranslate() { return mLayers.empty() ? 0 : -mLayers.top()->Bounds().T; }
 
   void PathTransformSetMatrix(const IMatrix& m) override;
   void SetClipRegion(const IRECT& r) override;
@@ -95,7 +99,7 @@ private:
   void SetCanvasSourcePattern(val& context, const IPattern& pattern, const IBlend* pBlend = nullptr);
   void SetCanvasBlendMode(val& context, const IBlend* pBlend);
     
-  std::vector<std::pair<WDL_String, WDL_String>> mCustomFonts;
+  std::vector<val> mLoadingFonts;
 
   static StaticStorage<Font> sFontCache;
 };

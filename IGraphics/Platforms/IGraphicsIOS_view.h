@@ -43,36 +43,74 @@ END_IPLUG_NAMESPACE
 using namespace iplug;
 using namespace igraphics;
 
-@interface IGraphicsIOS_View : UIScrollView <UITextFieldDelegate, UIScrollViewDelegate>
-{  
+@interface IGRAPHICS_UITABLEVC : UIViewController<UITableViewDataSource, UITableViewDelegate> // UITableViewController
+{
+  IPopupMenu* mMenu;
+  IGraphicsIOS* mGraphics;
+}
+@property (strong, nonatomic) UITableView* tableView;
+@property (strong, nonatomic) NSMutableArray* items;
+- (id) initWithIPopupMenuAndIGraphics: (IPopupMenu*) pMenu : (IGraphicsIOS*) pGraphics;
+
+@end
+
+@interface IGRAPHICS_VIEW : UIView
+<
+UITextFieldDelegate,
+UIPopoverPresentationControllerDelegate,
+UIGestureRecognizerDelegate,
+UITraitEnvironment,
+UIDocumentPickerDelegate,
+UIColorPickerViewControllerDelegate
+>
+{
 @public
   IGraphicsIOS* mGraphics;
+  IGRAPHICS_UITABLEVC* mMenuTableController;
+  UINavigationController* mMenuNavigationController;
   UITextField* mTextField;
+  UIAlertController* mAlertController;
+  CAMetalLayer* mMTLLayer;
   int mTextFieldLength;
+  IColorPickerHandlerFunc mColorPickerHandlerFunc;
+  IFileDialogCompletionHandlerFunc mFileDialogFunc;
+  float mPrevX, mPrevY;
 }
 - (id) initWithIGraphics: (IGraphicsIOS*) pGraphics;
 - (BOOL) isOpaque;
 - (BOOL) acceptsFirstResponder;
 - (BOOL) delaysContentTouches;
 - (void) removeFromSuperview;
-- (IPopupMenu*) createPopupMenu: (const IPopupMenu&) menu : (CGRect) bounds;
+- (IPopupMenu*) createPopupMenu: (IPopupMenu&) menu : (CGRect) bounds;
 - (void) createTextEntry: (int) paramIdx : (const IText&) text : (const char*) str : (int) length : (CGRect) areaRect;
 - (void) endUserInput;
-- (void) showMessageBox: (const char*) str : (const char*) caption : (EMsgBoxType) type : (IMsgBoxCompletionHanderFunc) completionHandler;
-- (void) getTouchXY: (CGPoint) pt x: (float*) pX y: (float*) pY;
+- (void) showMessageBox: (const char*) str : (const char*) caption : (EMsgBoxType) type : (IMsgBoxCompletionHandlerFunc) completionHandler;
+- (void) promptForFile: (NSString*) fileName : (NSString*) path : (EFileAction) action : (NSArray*) contentTypes : (IFileDialogCompletionHandlerFunc) completionHandler;
+- (BOOL) promptForColor: (IColor&) color : (const char*) str : (IColorPickerHandlerFunc) func;
+- (void) presentationControllerDidDismiss: (UIPresentationController*) presentationController;
+
+//UIDocumentPickerDelegate,
+- (void) documentPicker:(UIDocumentPickerViewController*) controller didPickDocumentsAtURLs:(NSArray <NSURL *>*)urls;
+- (void) documentPickerWasCancelled:(UIDocumentPickerViewController*) controller;
+
+//UIColorPickerViewControllerDelegate
+- (void) colorPickerViewControllerDidSelectColor:(UIColorPickerViewController*) viewController;
+- (void) colorPickerViewControllerDidFinish:(UIColorPickerViewController*) viewController;
+
+//gestures
+- (void) attachGestureRecognizer: (EGestureType) type;
+- (BOOL) gestureRecognizer:(UIGestureRecognizer*) gestureRecognizer shouldReceiveTouch:(UITouch*)touch;
+- (void) onTapGesture: (UITapGestureRecognizer*) recognizer;
+- (void) onLongPressGesture: (UILongPressGestureRecognizer*) recognizer;
+- (void) onSwipeGesture: (UISwipeGestureRecognizer*) recognizer;
+- (void) onPinchGesture: (UIPinchGestureRecognizer*) recognizer;
+- (void) onRotateGesture: (UIRotationGestureRecognizer*) recognizer;
+
+- (void) getLastTouchLocation: (float&) x : (float&) y;
+
+- (void) traitCollectionDidChange: (UITraitCollection*) previousTraitCollection;
+
 @property (readonly) CAMetalLayer* metalLayer;
 @property (nonatomic, strong) CADisplayLink *displayLink;
 
 @end
-
-#ifdef IGRAPHICS_IMGUI
-#import <MetalKit/MetalKit.h>
-
-@interface IGRAPHICS_IMGUIVIEW : MTKView
-{
-  IGraphicsIOS_View* mView;
-}
-@property (nonatomic, strong) id <MTLCommandQueue> commandQueue;
-- (id) initWithIGraphicsView: (IGraphicsIOS_View*) pView;
-@end
-#endif

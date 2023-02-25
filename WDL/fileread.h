@@ -57,6 +57,10 @@
       #include <sys/param.h>
       #include <sys/mount.h>
    #endif
+   extern struct stat wdl_stat_chk;
+   // if this fails on linux, use CFLAGS += -D_FILE_OFFSET_BITS=64
+   typedef char wdl_fileread_assert_failed_stat_not_64[sizeof(wdl_stat_chk.st_size)!=8 ? -1 : 1];
+   typedef char wdl_fileread_assert_failed_off_t_64[sizeof(off_t)!=8 ? -1 : 1];
   #endif
   
 #endif
@@ -111,6 +115,7 @@ public:
         else if (c <= 0xF4 && str[1] >=0x80 && str[1] <= 0xBF && str[2] >=0x80 && str[2] <= 0xBF) return TRUE;
       }
       str++;
+      if (((const char *)str-_str) >= 256) return TRUE; // long filenames get converted to wide
     }
     return FALSE;
   }
@@ -161,10 +166,11 @@ public:
       if (szreq > 1000)
       {
         WDL_TypedBuf<WCHAR> wfilename;
-        wfilename.Resize(szreq+10);
+        wfilename.Resize(szreq+20);
 
-        if (MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,filename,-1,wfilename.Get(),wfilename.GetSize()))
+        if (MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,filename,-1,wfilename.Get(),wfilename.GetSize()-10))
         {
+          correctlongpath(wfilename.Get());
           m_fh = CreateFileW(wfilename.Get(),GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,flags,NULL);
           if (m_fh == INVALID_HANDLE_VALUE && GetLastError()==ERROR_SHARING_VIOLATION)
           {
@@ -177,8 +183,9 @@ public:
       {
         WCHAR wfilename[1024];
 
-        if (MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,filename,-1,wfilename,1024))
+        if (MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,filename,-1,wfilename,1024-10))
         {
+          correctlongpath(wfilename);
           m_fh = CreateFileW(wfilename,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,flags,NULL);
           if (m_fh == INVALID_HANDLE_VALUE && GetLastError()==ERROR_SHARING_VIOLATION)
           {
@@ -225,8 +232,11 @@ public:
         else if (l>0)
         {
           m_mmap_totalbufmode = malloc(l);
-          DWORD sz;
-          ReadFile(m_fh,m_mmap_totalbufmode,l,&sz,NULL);
+          if (m_mmap_totalbufmode)
+          {
+            DWORD sz;
+            ReadFile(m_fh,m_mmap_totalbufmode,l,&sz,NULL);
+          }
           m_fsize_maychange=false;
         }
       }
@@ -292,11 +302,11 @@ public:
         else
         {
           m_mmap_totalbufmode = malloc((size_t)m_fsize);
-          m_fsize = pread(m_filedes,m_mmap_totalbufmode,(size_t)m_fsize,0);
+          if (m_mmap_totalbufmode)
+            m_fsize = pread(m_filedes,m_mmap_totalbufmode,(size_t)m_fsize,0);
           m_fsize_maychange=false;
         }
       }
-
     }
     if (!m_mmap_view && !m_mmap_totalbufmode && m_filedes>=0 && nbufs*bufsize>=WDL_UNBUF_ALIGN)
       m_bufspace.Resize(nbufs*bufsize+(WDL_UNBUF_ALIGN-1));
@@ -364,6 +374,31 @@ public:
     return m_filedes >= 0;
 #else
     return m_fp != NULL;
+#endif
+  }
+
+  void CloseHandlesIfFullyInMemory()
+  {
+    if (!m_mmap_totalbufmode) return;
+#ifdef WDL_WIN32_NATIVE_READ
+    if (m_fh != INVALID_HANDLE_VALUE) 
+    {
+      CloseHandle(m_fh);
+      m_fh=INVALID_HANDLE_VALUE;
+    }
+#elif defined(WDL_POSIX_NATIVE_READ)
+    if (m_filedes>=0) 
+    {
+      if (m_filedes_locked) flock(m_filedes,LOCK_UN); // release shared lock
+      close(m_filedes);
+      m_filedes=-1;
+    }
+#else
+    if (m_fp) 
+    {
+      fclose(m_fp);
+      m_fp=NULL;
+    }
 #endif
   }
 
@@ -643,6 +678,7 @@ public:
 
   WDL_FILEREAD_POSTYPE GetSize()
   {
+    if (m_mmap_totalbufmode) return m_fsize;
 #ifdef WDL_WIN32_NATIVE_READ
     if (m_fh == INVALID_HANDLE_VALUE) return 0;
 #elif defined(WDL_POSIX_NATIVE_READ)
@@ -659,9 +695,8 @@ public:
       DWORD l=GetFileSize(m_fh,&h);
       m_fsize=(((WDL_FILEREAD_POSTYPE)h)<<32)|l;
 #elif defined(WDL_POSIX_NATIVE_READ)
-      struct stat64 st;
-      if (!fstat64(m_filedes,&st))  m_fsize = st.st_size;
-
+      struct stat st;
+      if (!fstat(m_filedes,&st))  m_fsize = st.st_size;
 #endif
     }
 
@@ -670,6 +705,7 @@ public:
 
   WDL_FILEREAD_POSTYPE GetPosition()
   {
+    if (m_mmap_totalbufmode) return m_file_position;
 #ifdef WDL_WIN32_NATIVE_READ
     if (m_fh == INVALID_HANDLE_VALUE) return -1;
 #elif defined(WDL_POSIX_NATIVE_READ)
@@ -684,13 +720,16 @@ public:
   {
     m_async_hashaderr=false;
 
-#ifdef WDL_WIN32_NATIVE_READ
-    if (m_fh == INVALID_HANDLE_VALUE) return true;
-#elif defined(WDL_POSIX_NATIVE_READ)
-    if (m_filedes<0) return true;
-#else
-    if (!m_fp) return true;
-#endif
+    if (!m_mmap_totalbufmode)
+    {
+      #ifdef WDL_WIN32_NATIVE_READ
+        if (m_fh == INVALID_HANDLE_VALUE) return true;
+      #elif defined(WDL_POSIX_NATIVE_READ)
+        if (m_filedes<0) return true;
+      #else
+        if (!m_fp) return true;
+      #endif
+    }
 
     if (m_fsize_maychange) GetSize();
 
@@ -778,6 +817,27 @@ public:
   bool m_syncrd_firstbuf;
   bool m_async_hashaderr;
 
+#ifdef _WIN32
+  static void correctlongpath(WCHAR *buf) // this also exists as wdl_utf8_correctlongpath
+  {
+    const WCHAR *insert;
+    WCHAR *wr;
+    int skip = 0;
+    if (!buf || !buf[0] || wcslen(buf) < 256) return;
+    if (buf[1] == ':') insert=L"\\\\?\\";
+    else if (buf[0] == '\\' && buf[1] == '\\') { insert = L"\\\\?\\UNC\\"; skip=2; }
+    else return;
+
+    wr = buf + wcslen(insert);
+    memmove(wr, buf + skip, (wcslen(buf+skip)+1)*2);
+    memmove(buf,insert,wcslen(insert)*2);
+    while (*wr)
+    {
+      if (*wr == '/') *wr = '\\';
+      wr++;
+    }
+  }
+#endif
 } WDL_FIXALIGN;
 
 

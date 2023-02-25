@@ -18,8 +18,9 @@
 #include <string>
 #include <map>
 
-#if defined OS_IOS
+#if defined(OS_IOS) || defined(OS_MAC)
 #import <Foundation/Foundation.h>
+#include <TargetConditionals.h>
 #endif
 
 #ifdef IGRAPHICS_METAL
@@ -29,6 +30,8 @@ extern std::map<std::string, void*> gTextureMap;
 BEGIN_IPLUG_NAMESPACE
 
 #ifdef OS_MAC
+#pragma mark - macOS
+
 void HostPath(WDL_String& path, const char* bundleID)
 {
   @autoreleasepool
@@ -120,7 +123,14 @@ void AppSupportPath(WDL_String& path, bool isSystem)
   path.Set([pApplicationSupportDirectory UTF8String]);
 }
 
-void SandboxSafeAppSupportPath(WDL_String& path, const char* appGroupID)
+void AppGroupContainerPath(WDL_String& path, const char* appGroupID)
+{
+  NSFileManager* mgr = [NSFileManager defaultManager];
+  NSURL* url = [mgr containerURLForSecurityApplicationGroupIdentifier:[NSString stringWithUTF8String:appGroupID]];
+  path.Set([[url path] UTF8String]);
+}
+
+void SharedMusicPath(WDL_String& path)
 {
   NSArray* pPaths = NSSearchPathForDirectoriesInDomains(NSMusicDirectory, NSUserDomainMask, YES);
   NSString* pUserMusicDirectory = [pPaths objectAtIndex:0];
@@ -137,26 +147,28 @@ bool GetResourcePathFromBundle(const char* fileName, const char* searchExt, WDL_
     
     bool isCorrectType = !strcasecmp(ext, searchExt);
     
+    bool isAppExtension = IsOOPAuv3AppExtension();
+    
     NSBundle* pBundle = [NSBundle bundleWithIdentifier:[NSString stringWithCString:bundleID encoding:NSUTF8StringEncoding]];
-    NSString* pFile = [[[NSString stringWithCString:fileName encoding:NSUTF8StringEncoding] lastPathComponent] stringByDeletingPathExtension];
-
+    
+    NSString* pFile = [[NSString stringWithCString:fileName encoding:NSUTF8StringEncoding] stringByDeletingPathExtension];
+    NSString* pExt = [NSString stringWithCString:searchExt encoding:NSUTF8StringEncoding];
+    
     if (isCorrectType && pBundle && pFile)
     {
-      NSString* pPath = [pBundle pathForResource:pFile ofType:[NSString stringWithCString:searchExt encoding:NSUTF8StringEncoding]];
-
-      if (!pPath)
+      NSString* pBasePath;
+      
+      if(isAppExtension)
+        pBasePath = [[[[pBundle bundlePath] stringByDeletingLastPathComponent] stringByDeletingLastPathComponent] stringByAppendingString:@"/Resources/"];
+      else
+        pBasePath = [[pBundle resourcePath] stringByAppendingString:@"/"];
+      
+      NSString* pPath = [[[pBasePath stringByAppendingString:pFile] stringByAppendingString: @"."] stringByAppendingString:pExt];
+      
+      if (pPath && [[NSFileManager defaultManager] fileExistsAtPath : pPath] == YES)
       {
-          pFile = [[NSString stringWithCString:fileName encoding:NSUTF8StringEncoding] stringByDeletingPathExtension];
-          pPath = [pBundle pathForResource:pFile ofType:[NSString stringWithCString:searchExt encoding:NSUTF8StringEncoding]];
-      }
-        
-      if (pPath)
-      {
-        if([[NSFileManager defaultManager] fileExistsAtPath : pPath] == YES)
-        {
-          fullPath.Set([pPath cString]);
-          return true;
-        }
+        fullPath.Set([pPath cStringUsingEncoding:NSUTF8StringEncoding]);
+        return true;
       }
     }
     
@@ -180,13 +192,13 @@ bool GetResourcePathFromSharedLocation(const char* fileName, const char* searchE
       
     if (isCorrectType && pFile)
     {
-      WDL_String musicFolder;
-      SandboxSafeAppSupportPath(musicFolder);
+      WDL_String musicPath;
+      SharedMusicPath(musicPath);
 
       if(subfolder)
       {
         NSString* pPluginName = [NSString stringWithCString: subfolder encoding:NSUTF8StringEncoding];
-        NSString* pMusicLocation = [NSString stringWithCString: musicFolder.Get() encoding:NSUTF8StringEncoding];
+        NSString* pMusicLocation = [NSString stringWithCString: musicPath.Get() encoding:NSUTF8StringEncoding];
         NSString* pPath = [[[[pMusicLocation stringByAppendingPathComponent:pPluginName] stringByAppendingPathComponent:@"Resources"] stringByAppendingPathComponent: pFile] stringByAppendingPathExtension:pExt];
 
         if([[NSFileManager defaultManager] fileExistsAtPath : pPath] == YES)
@@ -202,16 +214,18 @@ bool GetResourcePathFromSharedLocation(const char* fileName, const char* searchE
   }
 }
 
-EResourceLocation LocateResource(const char* name, const char* type, WDL_String& result, const char* bundleID, void*)
+EResourceLocation LocateResource(const char* name, const char* type, WDL_String& result, const char* bundleID, void*, const char* sharedResourcesSubPath)
 {
   if(CStringHasContents(name))
   {
+#ifndef AUv3_API
     // first check this bundle
     if(GetResourcePathFromBundle(name, type, result, bundleID))
       return EResourceLocation::kAbsolutePath;
+#endif
     
-    // then check ~/Music/PLUG_NAME, which is a shared folder that can be accessed from app sandbox
-    if(GetResourcePathFromSharedLocation(name, type, result, "VirtualCZ")) //TODO: Hardcoded! This will change
+    // then check ~/Music/sharedResourcesSubPath, which is a shared folder that can be accessed from app sandbox
+    if(GetResourcePathFromSharedLocation(name, type, result, sharedResourcesSubPath))
       return EResourceLocation::kAbsolutePath;
     
     // finally check name, which might be a full path - if the plug-in is trying to load a resource at runtime (e.g. skin-able UI)
@@ -226,8 +240,28 @@ EResourceLocation LocateResource(const char* name, const char* type, WDL_String&
   return EResourceLocation::kNotFound;
 }
 
+bool AppIsSandboxed()
+{
+  NSString* pHomeDir = NSHomeDirectory();
+  
+  if ([pHomeDir containsString:@"Library/Containers/"])
+    return true;
+  else
+    return false;
+}
+
+bool IsXPCAuHost()
+{
+  return ([[[NSProcessInfo processInfo] processName] containsString:@"XPC"]);
+}
+
+bool IsOOPAuv3AppExtension()
+{
+  return ([[[NSBundle mainBundle] bundleIdentifier] containsString:@"AUv3"]);
+}
+
 #elif defined OS_IOS
-#pragma mark - IOS
+#pragma mark - iOS
 
 void HostPath(WDL_String& path, const char* bundleID)
 {
@@ -240,22 +274,11 @@ void PluginPath(WDL_String& path, PluginIDType bundleID)
 void BundleResourcePath(WDL_String& path, PluginIDType bundleID)
 {
   NSBundle* pBundle = [NSBundle mainBundle];
-  
-  if([[pBundle bundleIdentifier] containsString:@"AUv3"])
-    pBundle = [NSBundle bundleWithIdentifier:[NSString stringWithCString:bundleID encoding:NSUTF8StringEncoding]];
-  
+    
+  if(IsOOPAuv3AppExtension())
+    pBundle = [NSBundle bundleWithPath: [[[pBundle bundlePath] stringByDeletingLastPathComponent] stringByDeletingLastPathComponent]];
+
   path.Set([[pBundle resourcePath] UTF8String]);
-}
-
-void AppSupportPath(WDL_String& path, bool isSystem)
-{
-}
-
-void SandboxSafeAppSupportPath(WDL_String& path, const char* appGroupID)
-{
-  NSFileManager* mgr = [NSFileManager defaultManager];
-  NSURL* url = [mgr containerURLForSecurityApplicationGroupIdentifier:[NSString stringWithUTF8String:appGroupID]];
-  path.Set([[url path] UTF8String]);
 }
 
 void DesktopPath(WDL_String& path)
@@ -272,9 +295,15 @@ void INIPath(WDL_String& path, const char* pluginName)
   path.Set("");
 }
 
-bool IsAuv3AppExtension()
+void AppSupportPath(WDL_String& path, bool isSystem)
 {
-  return ([[[NSBundle mainBundle] bundleIdentifier] containsString:@"AUv3"]);
+}
+
+void AppGroupContainerPath(WDL_String& path, const char* appGroupID)
+{
+  NSFileManager* mgr = [NSFileManager defaultManager];
+  NSURL* url = [mgr containerURLForSecurityApplicationGroupIdentifier:[NSString stringWithUTF8String:appGroupID]];
+  path.Set([[url path] UTF8String]);
 }
 
 bool GetResourcePathFromBundle(const char* fileName, const char* searchExt, WDL_String& fullPath, const char* bundleID)
@@ -287,16 +316,15 @@ bool GetResourcePathFromBundle(const char* fileName, const char* searchExt, WDL_
     
     bool isCorrectType = !strcasecmp(ext, searchExt);
     
-    bool isAppExtension = false;
+    bool isAppExtension = IsOOPAuv3AppExtension();
     
-    NSBundle* pBundle = [NSBundle mainBundle];
-    
-    if([[pBundle bundleIdentifier] containsString:@"AUv3"])
-      isAppExtension = true;
+    NSBundle* pBundle;
     
     if(isAppExtension)
       pBundle = [NSBundle bundleWithIdentifier:[NSString stringWithCString:bundleID encoding:NSUTF8StringEncoding]];
-    
+    else
+      pBundle = [NSBundle mainBundle];
+
     NSString* pFile = [[NSString stringWithCString:fileName encoding:NSUTF8StringEncoding] stringByDeletingPathExtension];
     NSString* pExt = [NSString stringWithCString:searchExt encoding:NSUTF8StringEncoding];
     
@@ -304,14 +332,21 @@ bool GetResourcePathFromBundle(const char* fileName, const char* searchExt, WDL_
     {
       NSString* pRootPath;
       
-      if(isAppExtension)
+      if (isAppExtension)
+      {
         pRootPath = [[[pBundle bundlePath] stringByDeletingLastPathComponent] stringByDeletingLastPathComponent];
+        #if TARGET_OS_MACCATALYST
+        pRootPath = [pRootPath stringByAppendingString: @"/Resources"];
+        #endif
+      }
       else
-        pRootPath = [pBundle bundlePath];
+      {
+        pRootPath = [pBundle resourcePath];
+      }
       
       NSString* pPath = [[[[pRootPath stringByAppendingString:@"/"] stringByAppendingString:pFile] stringByAppendingString: @"."] stringByAppendingString:pExt];
       
-      if (pPath)
+      if (pPath && [[NSFileManager defaultManager] fileExistsAtPath : pPath] == YES)
       {
         fullPath.Set([pPath cStringUsingEncoding:NSUTF8StringEncoding]);
         return true;
@@ -323,9 +358,9 @@ bool GetResourcePathFromBundle(const char* fileName, const char* searchExt, WDL_
   }
 }
 
-EResourceLocation LocateResource(const char* name, const char* type, WDL_String& result, const char* bundleID, void*)
+EResourceLocation LocateResource(const char* name, const char* type, WDL_String& result, const char* bundleID, void*, const char*)
 {
-  if(CStringHasContents(name))
+  if (CStringHasContents(name))
   {
 #ifdef IGRAPHICS_METAL
     auto itr = gTextureMap.find(name);
@@ -337,11 +372,27 @@ EResourceLocation LocateResource(const char* name, const char* type, WDL_String&
     }
 #endif
     
-    if(GetResourcePathFromBundle(name, type, result, bundleID))
+    if (GetResourcePathFromBundle(name, type, result, bundleID))
       return EResourceLocation::kAbsolutePath;
   }
   
   return EResourceLocation::kNotFound;
+}
+
+bool AppIsSandboxed()
+{
+  return true;
+}
+
+bool IsXPCAuHost()
+{
+  // TODO: actually not allways the case if AUv3 is instantiated from framework
+  return true;
+}
+
+bool IsOOPAuv3AppExtension()
+{
+  return ([[[NSBundle mainBundle] bundleIdentifier] containsString:@"AUv3"]);
 }
 
 #endif

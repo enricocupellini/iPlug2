@@ -26,27 +26,31 @@ BEGIN_IGRAPHICS_NAMESPACE
 class ICornerResizerControl : public IControl
 {
 public:
-  ICornerResizerControl(IRECT graphicsBounds, float size)
+  ICornerResizerControl(const IRECT& graphicsBounds, float size, const IColor& color = COLOR_TRANSLUCENT, const IColor& mouseOverColour = COLOR_BLACK, const IColor& dragColor = COLOR_BLACK)
   : IControl(graphicsBounds.GetFromBRHC(size, size).GetPadded(-1))
-  , mInitialGraphicsBounds(graphicsBounds)
   , mSize(size)
+  , mInitialGraphicsBounds(graphicsBounds)
+  , mColor(color)
+  , mMouseOverColor(mouseOverColour)
+  , mDragColor(dragColor)
   {
   }
 
   void Draw(IGraphics& g) override
   {
-    if(GetMouseIsOver() || GetUI()->mResizingInProcess)
-      g.FillTriangle(COLOR_BLACK, mRECT.L, mRECT.B, mRECT.R, mRECT.T, mRECT.R, mRECT.B);
-    else
-      g.FillTriangle(COLOR_TRANSLUCENT, mRECT.L, mRECT.B, mRECT.R, mRECT.T, mRECT.R, mRECT.B);
+    const IColor &color = GetUI()->mResizingInProcess ? mDragColor : GetMouseIsOver()? mMouseOverColor : mColor;
+    
+    g.FillTriangle(color, mRECT.L, mRECT.B, mRECT.R, mRECT.T, mRECT.R, mRECT.B);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
-    if(mod.S || mod.R)
-      GetUI()->Resize((int) mInitialGraphicsBounds.W(), (int) mInitialGraphicsBounds.H(), 1.f);
-    else
-      GetUI()->StartResizeGesture();
+    GetUI()->StartDragResize();
+  }
+    
+  void OnMouseDblClick(float x, float y, const IMouseMod& mod) override
+  {
+    GetUI()->Resize(static_cast<int>(mInitialGraphicsBounds.W()), static_cast<int>(mInitialGraphicsBounds.H()), 1.f);
   }
 
   void OnRescale() override
@@ -71,12 +75,12 @@ public:
     mMouseOver = false;
     IControl::OnMouseOut();
   }
-
 private:
   float mSize;
   bool mMouseOver = false;
   ECursor mPrevCursorType = ECursor::ARROW;
   IRECT mInitialGraphicsBounds;
+  IColor mColor, mMouseOverColor, mDragColor;
 };
 
 END_IGRAPHICS_NAMESPACE

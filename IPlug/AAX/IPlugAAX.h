@@ -87,9 +87,12 @@ public:
   void InformHostOfParamChange(int idx, double normalizedValue) override;
   void EndInformHostOfParamChange(int idx) override;
   
-  void InformHostOfProgramChange() override { }; //NA
+  void InformHostOfPresetChange() override { }; //NA
   
-  bool EditorResizeFromDelegate(int viewWidth, int viewHeight) override;
+  bool EditorResize(int viewWidth, int viewHeight) override;
+  
+  /** Get the name of the track that the plug-in is inserted on */
+  virtual void GetTrackName(WDL_String& str) override { str = mTrackName; };
   
   //IPlug Processor Overrides
   void SetLatency(int samples) override;
@@ -100,7 +103,7 @@ public:
   //AAX_CIPlugParameters Overrides
   static AAX_CEffectParameters *AAX_CALLBACK Create();
   AAX_Result EffectInit() override;
-  void RenderAudio(AAX_SIPlugRenderInfo* ioRenderInfo) override;
+  void RenderAudio(AAX_SIPlugRenderInfo* ioRenderInfo, const TParamValPair* inSynchronizedParamValues[], int32_t inNumSynchronizedParamValues) override;
   
   //AAX_CEffectParameters Overrides
   AAX_Result GetChunkIDFromIndex(int32_t index, AAX_CTypeID* pChunkID) const override;
@@ -108,6 +111,7 @@ public:
   AAX_Result GetChunk(AAX_CTypeID chunkID, AAX_SPlugInChunk* pChunk) const override;
   AAX_Result SetChunk(AAX_CTypeID chunkID, const AAX_SPlugInChunk* pChunk) override;
   AAX_Result CompareActiveChunk(const AAX_SPlugInChunk* pChunk, AAX_CBoolean* pIsEqual) const override;
+  AAX_Result NotificationReceived (AAX_CTypeID type, const void* data, uint32_t size) override;
 
   //IPlugAAX
   /** This is needed in chunks based plug-ins to tell PT a non-indexed param changed and to turn on the compare light. You can call this method from your plug-in implementation by doing a dynamic_cast in order to convert an "IPlug" into a "IPlugAAX"
@@ -119,6 +123,8 @@ private:
   AAX_ITransport* mTransport = nullptr;
   WDL_PtrList<WDL_String> mParamIDs;
   IMidiQueue mMidiOutputQueue;
+  int mMaxNChansForMainInputBus = 0;
+  WDL_String mTrackName;
 };
 
 IPlugAAX* MakePlug(const InstanceInfo& info);

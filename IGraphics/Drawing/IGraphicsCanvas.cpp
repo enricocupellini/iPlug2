@@ -15,6 +15,8 @@
 #include <type_traits>
 #include <emscripten.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 #include "wdl_base64.h"
 
 using namespace iplug;
@@ -72,17 +74,23 @@ StaticStorage<IGraphicsCanvas::Font> IGraphicsCanvas::sFontCache;
 
 #pragma mark - Utilities
 
-static std::string CanvasColor(const IColor& color, float alpha = 1.0)
+BEGIN_IPLUG_NAMESPACE
+BEGIN_IGRAPHICS_NAMESPACE
+
+std::string CanvasColor(const IColor& color, float alpha)
 {
   WDL_String str;
   str.SetFormatted(64, "rgba(%d, %d, %d, %lf)", color.R, color.G, color.B, alpha * color.A / 255.0);
   return str.Get();
 }
 
+END_IGRAPHICS_NAMESPACE
+END_IPLUG_NAMESPACE
+
 #pragma mark -
 
 IGraphicsCanvas::IGraphicsCanvas(IGEditorDelegate& dlg, int w, int h, int fps, float scale)
-: IGraphicsPathBase(dlg, w, h, fps, scale)
+: IGraphics(dlg, w, h, fps, scale)
 {
   StaticStorage<Font>::Accessor storage(sFontCache);
   storage.Retain();
@@ -110,6 +118,7 @@ void IGraphicsCanvas::DrawBitmap(const IBitmap& bitmap, const IRECT& bounds, int
   context.call<void>("clip");
   context.call<void>("drawImage", img, srcX * bs, srcY * bs, sr.W(), sr.H(), bounds.L, bounds.T, bounds.W(), bounds.H());
   GetContext().call<void>("restore");
+  PathClear();
 }
 
 void IGraphicsCanvas::PathClear()
@@ -234,6 +243,8 @@ void IGraphicsCanvas::SetCanvasSourcePattern(val& context, const IPattern& patte
       context.set("strokeStyle", gradient);
     }
     break;
+    default:
+    break;
   }
 }
 
@@ -244,18 +255,16 @@ void IGraphicsCanvas::SetCanvasBlendMode(val& context, const IBlend* pBlend)
   
   switch (pBlend->mMethod)
   {
-    case EBlend::Default:       // fall through
-    case EBlend::Clobber:       // fall through
-    case EBlend::SourceOver:    context.set("globalCompositeOperation", "source-over");        break;
-    case EBlend::SourceIn:      context.set("globalCompositeOperation", "source-in");          break;
-    case EBlend::SourceOut:     context.set("globalCompositeOperation", "source-out");         break;
-    case EBlend::SourceAtop:    context.set("globalCompositeOperation", "source-atop");        break;
-    case EBlend::DestOver:      context.set("globalCompositeOperation", "destination-over");   break;
-    case EBlend::DestIn:        context.set("globalCompositeOperation", "destination-in");     break;
-    case EBlend::DestOut:       context.set("globalCompositeOperation", "destination-out");    break;
-    case EBlend::DestAtop:      context.set("globalCompositeOperation", "destination-atop");   break;
-    case EBlend::Add:           context.set("globalCompositeOperation", "lighter");            break;
-    case EBlend::XOR:           context.set("globalCompositeOperation", "xor");                break;
+    case EBlend::SrcOver:    context.set("globalCompositeOperation", "source-over");        break;
+    case EBlend::SrcIn:      context.set("globalCompositeOperation", "source-in");          break;
+    case EBlend::SrcOut:     context.set("globalCompositeOperation", "source-out");         break;
+    case EBlend::SrcAtop:    context.set("globalCompositeOperation", "source-atop");        break;
+    case EBlend::DstOver:    context.set("globalCompositeOperation", "destination-over");   break;
+    case EBlend::DstIn:      context.set("globalCompositeOperation", "destination-in");     break;
+    case EBlend::DstOut:     context.set("globalCompositeOperation", "destination-out");    break;
+    case EBlend::DstAtop:    context.set("globalCompositeOperation", "destination-atop");   break;
+    case EBlend::Add:        context.set("globalCompositeOperation", "lighter");            break;
+    case EBlend::XOR:        context.set("globalCompositeOperation", "xor");                break;
   }
 }
 
@@ -294,12 +303,13 @@ void IGraphicsCanvas::PrepareAndMeasureText(const IText& text, const char* str, 
   r = IRECT((float) x, (float) (y - ascender), (float) (x + textWidth), (float) (y + textHeight - ascender));
 }
 
-void IGraphicsCanvas::DoMeasureText(const IText& text, const char* str, IRECT& bounds) const
+float IGraphicsCanvas::DoMeasureText(const IText& text, const char* str, IRECT& bounds) const
 {
   IRECT r = bounds;
   double x, y;
   PrepareAndMeasureText(text, str, bounds, x, y);
   DoMeasureTextRotation(text, r, bounds);
+  return bounds.W();
 }
 
 void IGraphicsCanvas::DoDrawText(const IText& text, const char* str, const IRECT& bounds, const IBlend* pBlend)
@@ -330,13 +340,10 @@ void IGraphicsCanvas::SetClipRegion(const IRECT& r)
   val context = GetContext();
   context.call<void>("restore");
   context.call<void>("save");
-  if (!r.Empty())
-  {
-    context.call<void>("beginPath");
-    context.call<void>("rect", r.L, r.T, r.W(), r.H());
-    context.call<void>("clip");
-    context.call<void>("beginPath");
-  }
+  context.call<void>("beginPath");
+  context.call<void>("rect", r.L, r.T, r.W(), r.H());
+  context.call<void>("clip");
+  context.call<void>("beginPath");
 }
 
 bool IGraphicsCanvas::BitmapExtSupported(const char* ext)
@@ -351,7 +358,38 @@ APIBitmap* IGraphicsCanvas::LoadAPIBitmap(const char* fileNameOrResID, int scale
   return new Bitmap(GetPreloadedImages()[fileNameOrResID], fileNameOrResID + 1, scale);
 }
 
-APIBitmap* IGraphicsCanvas::CreateAPIBitmap(int width, int height, int scale, double drawScale)
+APIBitmap* IGraphicsCanvas::LoadAPIBitmap(const char* name, const void* pData, int dataSize, int scale)
+{
+  int width = 0;
+  int height = 0;
+  int channels = 0;
+  uint8_t* pRGBA;
+
+  pRGBA = stbi_load_from_memory((const uint8_t*)pData, dataSize, &width, &height, &channels, 4);
+  if (!pRGBA)
+  {
+    return nullptr;
+  }
+
+  DBGMSG("Size: %d x %d\n", width, height);
+  // Now that we've decoded the data, put it on a canvas
+  int rgbaSize = width * height * channels;
+  val rgbaArray = val::global("Uint8ClampedArray").new_(val(emscripten::typed_memory_view(rgbaSize, pRGBA)));
+
+  val imgData = val::global("ImageData").new_(rgbaArray, val(width), val(height));
+  val canvas = val::global("document").call<val>("createElement", std::string("canvas"));
+  canvas.set("width", width);
+  canvas.set("height", height);
+
+  val ctx = canvas.call<val>("getContext", std::string("2d"));
+  ctx.call<void>("putImageData", imgData, 0, 0);
+
+  stbi_image_free(pRGBA);
+
+  return new Bitmap(canvas, name, scale);
+}
+
+APIBitmap* IGraphicsCanvas::CreateAPIBitmap(int width, int height, float scale, double drawScale, bool cacheable)
 {
   return new Bitmap(width, height, scale, drawScale);
 }
@@ -405,9 +443,7 @@ bool IGraphicsCanvas::CompareFontMetrics(const char* style, const char* font1, c
 
 bool IGraphicsCanvas::FontExists(const char* font, const char* style)
 {
-    return !CompareFontMetrics(style, font, "monospace") ||
-    !CompareFontMetrics(style, font, "sans-serif") ||
-    !CompareFontMetrics(style, font, "serif");
+  return !CompareFontMetrics(style, font, "monospace") || !CompareFontMetrics(style, font, "sans-serif") || !CompareFontMetrics(style, font, "serif");
 }
 
 bool IGraphicsCanvas::LoadAPIFont(const char* fontID, const PlatformFontPtr& font)
@@ -415,11 +451,7 @@ bool IGraphicsCanvas::LoadAPIFont(const char* fontID, const PlatformFontPtr& fon
   StaticStorage<Font>::Accessor storage(sFontCache);
 
   if (storage.Find(fontID))
-  {
-    if (!font->IsSystem())
-      mCustomFonts.push_back(*font->GetDescriptor());
     return true;
-  }
 
   if (!font->IsSystem())
   {
@@ -427,34 +459,21 @@ bool IGraphicsCanvas::LoadAPIFont(const char* fontID, const PlatformFontPtr& fon
     
     if (data->IsValid())
     {
-      // Embed the font data in base64 format as CSS in the head of the html
-      WDL_TypedBuf<char> base64Encoded;
-      
-      if (!base64Encoded.ResizeOK(((data->GetSize() * 4) + 3) / 3 + 1))
-        return false;
-      
-      wdl_base64encode(data->Get(), base64Encoded.Get(), data->GetSize());
-      std::string htmlText("@font-face { font-family: '");
-      htmlText.append(fontID);
-      htmlText.append("'; src: url(data:font/ttf;base64,");
-      htmlText.append(base64Encoded.Get());
-      htmlText.append(") format('truetype'); }");
-      val document = val::global("document");
-      val documentHead = document["head"];
-      val css = document.call<val>("createElement", std::string("style"));
-      css.set("type", std::string("text/css"));
-      css.set("innerHTML", htmlText);
-      document["head"].call<void>("appendChild", css);
-      
+      // Load the font from data
+        
+      val fontData = val(typed_memory_view(data->GetSize(), data->Get()));
+      val fontFace = val::global("FontFace").new_(std::string(fontID), fontData);
+        
       FontDescriptor descriptor = font->GetDescriptor();
       const double ascenderRatio = data->GetAscender() / static_cast<double>(data->GetAscender() - data->GetDescender());
       const double EMRatio = data->GetHeightEMRatio();
       storage.Add(new Font({descriptor->first, descriptor->second}, ascenderRatio, EMRatio), fontID);
       
-      // Add to store and encourage to load by using the font immediately
+      // Add to store and request load immediately
       
-      mCustomFonts.push_back(*descriptor);
-      CompareFontMetrics(descriptor->second.Get(), descriptor->first.Get(), "monospace");
+      fontFace.call<val>("load");
+      val::global("document")["fonts"].call<void>("add", fontFace);
+      mLoadingFonts.push_back(fontFace);
         
       return true;
     }
@@ -480,13 +499,18 @@ bool IGraphicsCanvas::LoadAPIFont(const char* fontID, const PlatformFontPtr& fon
 
 bool IGraphicsCanvas::AssetsLoaded()
 {
-  for (auto it = mCustomFonts.begin(); it != mCustomFonts.end(); it++)
+  for (auto it = mLoadingFonts.begin(); it != mLoadingFonts.end(); it++)
   {
-    if (!FontExists(it->first.Get(), it->second.Get()))
+    std::string status = (*it)["status"].as<std::string>();
+      
+    if (status.compare("loaded"))
+    {
+      assert(status.compare("error") && "Font didn't load");
       return false;
+    }
   }
   
-  mCustomFonts.clear();
+  mLoadingFonts.clear();
     
   return true;
 }
@@ -542,7 +566,7 @@ void IGraphicsCanvas::ApplyShadowMask(ILayerPtr& layer, RawBitmapData& mask, con
       pixelData.set(i, in[i]);
     
     localContext.call<void>("putImageData", imageData, 0, 0);
-    IBlend blend(EBlend::SourceIn, shadow.mOpacity);
+    IBlend blend(EBlend::SrcIn, shadow.mOpacity);
     localContext.call<void>("rect", 0, 0, width, height);
     localContext.call<void>("scale", scale, scale);
     localContext.call<void>("translate", -(layer->Bounds().L + shadow.mXOffset), -(layer->Bounds().T + shadow.mYOffset));

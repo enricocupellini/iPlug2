@@ -136,11 +136,6 @@ void VST3PresetsPath(WDL_String& path, const char* mfrName, const char* pluginNa
   path.AppendFormatted(MAX_WIN32_PATH_LEN, "\\VST3 Presets\\%s\\%s", mfrName, pluginName);
 }
 
-void SandboxSafeAppSupportPath(WDL_String& path, const char* appGroupID)
-{
-  AppSupportPath(path);
-}
-
 void INIPath(WDL_String& path, const char * pluginName)
 {
   GetKnownFolder(path, CSIDL_LOCAL_APPDATA);
@@ -170,7 +165,7 @@ static BOOL EnumResNameProc(HANDLE module, LPCTSTR type, LPTSTR name, LONG_PTR p
   return true; // keep enumerating
 }
 
-EResourceLocation LocateResource(const char* name, const char* type, WDL_String& result, const char*, void* pHInstance)
+EResourceLocation LocateResource(const char* name, const char* type, WDL_String& result, const char*, void* pHInstance, const char*)
 {
   if (CStringHasContents(name))
   {
@@ -238,11 +233,6 @@ void AppSupportPath(WDL_String& path, bool isSystem)
   path.Set("Settings");
 }
 
-void SandboxSafeAppSupportPath(WDL_String& path)
-{
-  path.Set("Settings");
-}
-
 void DesktopPath(WDL_String& path)
 {
   path.Set("");
@@ -253,26 +243,28 @@ void VST3PresetsPath(WDL_String& path, const char* mfrName, const char* pluginNa
   path.Set("Presets");
 }
 
-EResourceLocation LocateResource(const char* name, const char* type, WDL_String& result, const char*, void*)
+EResourceLocation LocateResource(const char* name, const char* type, WDL_String& result, const char*, void*, const char*)
 {
   if (CStringHasContents(name))
   {
     WDL_String plusSlash;
-    
+    WDL_String path(name);
+    const char* file = path.get_filepart();
+      
     bool foundResource = false;
     
     //TODO: FindResource is not sufficient here
     
     if(strcmp(type, "png") == 0) { //TODO: lowercase/uppercase png
-      plusSlash.SetFormatted(strlen("/resources/img/") + strlen(name) + 1, "/resources/img/%s", name);
-      foundResource = emscripten::val::global("Module")["preloadedImages"].call<bool>("hasOwnProperty", std::string(plusSlash.Get()));
+      plusSlash.SetFormatted(strlen("/resources/img/") + strlen(file) + 1, "/resources/img/%s", file);
+      foundResource = emscripten::val::global("preloadedImages").call<bool>("hasOwnProperty", std::string(plusSlash.Get()));
     }
     else if(strcmp(type, "ttf") == 0) { //TODO: lowercase/uppercase ttf
-      plusSlash.SetFormatted(strlen("/resources/fonts/") + strlen(name) + 1, "/resources/fonts/%s", name);
+      plusSlash.SetFormatted(strlen("/resources/fonts/") + strlen(file) + 1, "/resources/fonts/%s", file);
       foundResource = true; // TODO: check ttf
     }
     else if(strcmp(type, "svg") == 0) { //TODO: lowercase/uppercase svg
-      plusSlash.SetFormatted(strlen("/resources/img/") + strlen(name) + 1, "/resources/img/%s", name);
+      plusSlash.SetFormatted(strlen("/resources/img/") + strlen(file) + 1, "/resources/img/%s", file);
       foundResource = true; // TODO: check svg
     }
     

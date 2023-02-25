@@ -42,8 +42,8 @@ public:
   void BeginInformHostOfParamChange(int idx) override {};
   void InformHostOfParamChange(int idx, double normalizedValue) override {};
   void EndInformHostOfParamChange(int idx) override {};
-  void InformHostOfProgramChange() override {};
-  bool EditorResizeFromDelegate(int viewWidth, int viewHeight) override;
+  void InformHostOfPresetChange() override {};
+  bool EditorResize(int viewWidth, int viewHeight) override;
 
   //IEditorDelegate
   void SendSysexMsgFromUI(const ISysEx& msg) override;

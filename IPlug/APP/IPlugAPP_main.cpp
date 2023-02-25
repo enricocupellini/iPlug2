@@ -8,6 +8,7 @@
  ==============================================================================
 */
 
+#include <memory>
 #include "wdltypes.h"
 #include "wdlstring.h"
 
@@ -34,6 +35,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 {
   try
   {
+#ifndef APP_ALLOW_MULTIPLE_INSTANCES
     HANDLE hMutex = OpenMutex(MUTEX_ALL_ACCESS, 0, BUNDLE_NAME); // BUNDLE_NAME used because it won't have spaces in it
     
     if (!hMutex)
@@ -42,9 +44,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
     {
       HWND hWnd = FindWindow(0, BUNDLE_NAME);
       SetForegroundWindow(hWnd);
-      return 0; // should return 1?
+      return 0;
     }
-    
+#endif
     gHINSTANCE = hInstance;
     
     InitCommonControls();
@@ -129,18 +131,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
     if (gHWND)
       DestroyWindow(gHWND);
     
+#ifndef APP_ALLOW_MULTIPLE_INSTANCES
     ReleaseMutex(hMutex);
+#endif
   }
-  catch(...)
+  catch(std::exception e)
   {
-    DBGMSG("another instance running\n");
+    DBGMSG("Exception: %s", e.what());
+    return 1;
   }
   return 0;
 }
 #pragma mark - MAC
 #elif defined(OS_MAC)
 #import <Cocoa/Cocoa.h>
-#include <IPlugSWELL.h>
+#include "IPlugSWELL.h"
+#include "IPlugPaths.h"
+
 HWND gHWND;
 extern HMENU SWELL_app_stocksysmenu;
 
@@ -156,11 +163,11 @@ int main(int argc, char *argv[])
       NSLog(@"Registered audiounit app extension\n");
     else
       NSLog(@"Failed to register audiounit app extension\n");
-
-//    if(IsSandboxed())
-//      NSLog(@"SANDBOXED\n");
   }
 #endif
+  
+  if(AppIsSandboxed())
+    DBGMSG("App is sandboxed, file system access etc restricted!\n");
   
   return NSApplicationMain(argc,  (const char **) argv);
 }
@@ -266,7 +273,7 @@ INT_PTR SWELLAppMain(int msg, INT_PTR parm1, INT_PTR parm2)
       MSG* pMSG = (MSG*) parm1;
       NSView* pContentView = (NSView*) pMSG->hwnd;
       NSEvent* pEvent = (NSEvent*) parm2;
-      int etype = [pEvent type];
+      int etype = (int) [pEvent type];
           
       bool textField = [pContentView isKindOfClass:[NSText class]];
           
@@ -288,7 +295,7 @@ INT_PTR SWELLAppMain(int msg, INT_PTR parm1, INT_PTR parm2)
 #define CBS_HASSTRINGS 0
 #define SWELL_DLG_SCALE_AUTOGEN 1
 #define SET_IDD_DIALOG_PREF_SCALE 1.5
-#if APP_RESIZABLE
+#if PLUG_HOST_RESIZE
 #define SWELL_DLG_FLAGS_AUTOGEN SWELL_DLG_WS_FLIPPED|SWELL_DLG_WS_RESIZABLE
 #endif
 #include "swell-dlggen.h"

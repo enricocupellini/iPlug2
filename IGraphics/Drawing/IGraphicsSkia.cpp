@@ -1,16 +1,21 @@
 #include <cmath>
+#include <map>
 
 #include "IGraphicsSkia.h"
 
+#pragma warning( push )
+#pragma warning( disable : 4244 )
 #include "SkDashPathEffect.h"
 #include "SkGradientShader.h"
+#include "SkMaskFilter.h"
 #include "SkFont.h"
 #include "SkFontMetrics.h"
 #include "SkTypeface.h"
+#include "SkVertices.h"
+#include "SkSwizzle.h"
+#pragma warning( pop )
 
-#include "GrContext.h"
-
-#ifdef OS_MAC
+#if defined OS_MAC || defined OS_IOS
   #include "SkCGUtils.h"
   #if defined IGRAPHICS_GL2
     #include <OpenGL/gl.h>
@@ -20,16 +25,18 @@
   //even though this is a .cpp we are in an objc(pp) compilation unit
     #import <Metal/Metal.h>
     #import <QuartzCore/CAMetalLayer.h>
-  #else
+    #include "include/gpu/mtl/GrMtlBackendContext.h"
+  #elif !defined IGRAPHICS_CPU
     #error Define either IGRAPHICS_GL2, IGRAPHICS_GL3, IGRAPHICS_METAL, or IGRAPHICS_CPU for IGRAPHICS_SKIA with OS_MAC
   #endif
 #elif defined OS_WIN
   #pragma comment(lib, "libpng.lib")
   #pragma comment(lib, "zlib.lib")
   #pragma comment(lib, "skia.lib")
-  #ifdef IGRAPHICS_GL
-    #pragma comment(lib, "opengl32.lib")
-  #endif
+  #pragma comment(lib, "svg.lib")
+  #pragma comment(lib, "skshaper.lib")
+  #pragma comment(lib, "skunicode.lib")
+  #pragma comment(lib, "opengl32.lib")
 #endif
 
 #if defined IGRAPHICS_GL
@@ -39,27 +46,25 @@
 using namespace iplug;
 using namespace igraphics;
 
+extern std::map<std::string, MTLTexturePtr> gTextureMap;
+
 #pragma mark - Private Classes and Structs
 
 class IGraphicsSkia::Bitmap : public APIBitmap
 {
 public:
-  Bitmap(GrContext* context, int width, int height, int scale, float drawScale);
+  Bitmap(sk_sp<SkSurface> surface, int width, int height, float scale, float drawScale);
   Bitmap(const char* path, double sourceScale);
   Bitmap(const void* pData, int size, double sourceScale);
-  
+  Bitmap(sk_sp<SkImage>, double sourceScale);
+
 private:
   SkiaDrawable mDrawable;
 };
   
-IGraphicsSkia::Bitmap::Bitmap(GrContext* context, int width, int height, int scale, float drawScale)
+IGraphicsSkia::Bitmap::Bitmap(sk_sp<SkSurface> surface, int width, int height, float scale, float drawScale)
 {
-#ifdef IGRAPHICS_GL
-  SkImageInfo info = SkImageInfo::MakeN32Premul(width, height);
-  mDrawable.mSurface = SkSurface::MakeRenderTarget(context, SkBudgeted::kYes, info);
-#else
-  mDrawable.mSurface = SkSurface::MakeRasterN32Premul(width, height);
-#endif
+  mDrawable.mSurface = surface;
   mDrawable.mIsSurface = true;
   
   SetBitmap(&mDrawable, width, height, scale, drawScale);
@@ -67,8 +72,17 @@ IGraphicsSkia::Bitmap::Bitmap(GrContext* context, int width, int height, int sca
 
 IGraphicsSkia::Bitmap::Bitmap(const char* path, double sourceScale)
 {
-  auto data = SkData::MakeFromFileName(path);
-  mDrawable.mImage = SkImage::MakeFromEncoded(data);
+  sk_sp<SkData> data = SkData::MakeFromFileName(path);
+  
+  assert(data && "Unable to load file at path");
+  
+  auto image = SkImage::MakeFromEncoded(data);
+  
+#ifdef IGRAPHICS_CPU
+  image = image->makeRasterImage();
+#endif
+  
+  mDrawable.mImage = image;
   
   mDrawable.mIsSurface = false;
   SetBitmap(&mDrawable, mDrawable.mImage->width(), mDrawable.mImage->height(), sourceScale, 1.f);
@@ -77,9 +91,26 @@ IGraphicsSkia::Bitmap::Bitmap(const char* path, double sourceScale)
 IGraphicsSkia::Bitmap::Bitmap(const void* pData, int size, double sourceScale)
 {
   auto data = SkData::MakeWithoutCopy(pData, size);
-  mDrawable.mImage = SkImage::MakeFromEncoded(data);
+  auto image = SkImage::MakeFromEncoded(data);
   
+#ifdef IGRAPHICS_CPU
+  image = image->makeRasterImage();
+#endif
+  
+  mDrawable.mImage = image;
+
   mDrawable.mIsSurface = false;
+  SetBitmap(&mDrawable, mDrawable.mImage->width(), mDrawable.mImage->height(), sourceScale, 1.f);
+}
+
+IGraphicsSkia::Bitmap::Bitmap(sk_sp<SkImage> image, double sourceScale)
+{
+#ifdef IGRAPHICS_CPU
+  mDrawable.mImage = image->makeRasterImage();
+#else
+  mDrawable.mImage = image;
+#endif
+
   SetBitmap(&mDrawable, mDrawable.mImage->width(), mDrawable.mImage->height(), sourceScale, 1.f);
 }
 
@@ -95,10 +126,12 @@ struct IGraphicsSkia::Font
 // Fonts
 StaticStorage<IGraphicsSkia::Font> IGraphicsSkia::sFontCache;
 
-#pragma mark -
+#pragma mark - Utility conversions
 
-// Utility conversions
-static inline SkColor SkiaColor(const IColor& color, const IBlend* pBlend)
+BEGIN_IPLUG_NAMESPACE
+BEGIN_IGRAPHICS_NAMESPACE
+
+SkColor SkiaColor(const IColor& color, const IBlend* pBlend)
 {
   if (pBlend)
     return SkColorSetARGB(Clip(static_cast<int>(pBlend->mWeight * color.A), 0, 255), color.R, color.G, color.B);
@@ -106,36 +139,34 @@ static inline SkColor SkiaColor(const IColor& color, const IBlend* pBlend)
     return SkColorSetARGB(color.A, color.R, color.G, color.B);
 }
 
-static inline SkRect SkiaRect(const IRECT& r)
+SkRect SkiaRect(const IRECT& r)
 {
   return SkRect::MakeLTRB(r.L, r.T, r.R, r.B);
 }
 
-static inline SkBlendMode SkiaBlendMode(const IBlend* pBlend)
+SkBlendMode SkiaBlendMode(const IBlend* pBlend)
 {
   if (!pBlend)
     return SkBlendMode::kSrcOver;
     
   switch (pBlend->mMethod)
   {
-    case EBlend::Default:         // fall through
-    case EBlend::Clobber:         // fall through
-    case EBlend::SourceOver:      return SkBlendMode::kSrcOver;
-    case EBlend::SourceIn:        return SkBlendMode::kSrcIn;
-    case EBlend::SourceOut:       return SkBlendMode::kSrcOut;
-    case EBlend::SourceAtop:      return SkBlendMode::kSrcATop;
-    case EBlend::DestOver:        return SkBlendMode::kDstOver;
-    case EBlend::DestIn:          return SkBlendMode::kDstIn;
-    case EBlend::DestOut:         return SkBlendMode::kDstOut;
-    case EBlend::DestAtop:        return SkBlendMode::kDstATop;
-    case EBlend::Add:             return SkBlendMode::kPlus;
-    case EBlend::XOR:             return SkBlendMode::kXor;
+    case EBlend::SrcOver:      return SkBlendMode::kSrcOver;
+    case EBlend::SrcIn:        return SkBlendMode::kSrcIn;
+    case EBlend::SrcOut:       return SkBlendMode::kSrcOut;
+    case EBlend::SrcAtop:      return SkBlendMode::kSrcATop;
+    case EBlend::DstOver:      return SkBlendMode::kDstOver;
+    case EBlend::DstIn:        return SkBlendMode::kDstIn;
+    case EBlend::DstOut:       return SkBlendMode::kDstOut;
+    case EBlend::DstAtop:      return SkBlendMode::kDstATop;
+    case EBlend::Add:          return SkBlendMode::kPlus;
+    case EBlend::XOR:          return SkBlendMode::kXor;
   }
   
   return SkBlendMode::kClear;
 }
 
-static inline SkTileMode SkiaTileMode(const IPattern& pattern)
+SkTileMode SkiaTileMode(const IPattern& pattern)
 {
   switch (pattern.mExtend)
   {
@@ -148,13 +179,14 @@ static inline SkTileMode SkiaTileMode(const IPattern& pattern)
   return SkTileMode::kClamp;
 }
 
-static SkPaint SkiaPaint(const IPattern& pattern, const IBlend* pBlend)
+SkPaint SkiaPaint(const IPattern& pattern, const IBlend* pBlend)
 {
   SkPaint paint;
   paint.setAntiAlias(true);
   paint.setBlendMode(SkiaBlendMode(pBlend));
+  int numStops = pattern.NStops();
     
-  if (pattern.mType == EPatternType::Solid || pattern.NStops() <  2)
+  if (pattern.mType == EPatternType::Solid || numStops <  2)
   {
     paint.setColor(SkiaColor(pattern.GetStop(0).mColor, pBlend));
   }
@@ -179,37 +211,65 @@ static SkPaint SkiaPaint(const IPattern& pattern, const IBlend* pBlend)
     SkColor colors[8];
     SkScalar positions[8];
       
-    assert(pattern.NStops() <= 8);
+    assert(numStops <= 8);
     
-    for(int i = 0; i < pattern.NStops(); i++)
+    for(int i = 0; i < numStops; i++)
     {
       const IColorStop& stop = pattern.GetStop(i);
       colors[i] = SkiaColor(stop.mColor, pBlend);
       positions[i] = stop.mOffset;
     }
-   
-    if(pattern.mType == EPatternType::Linear)
-      paint.setShader(SkGradientShader::MakeLinear(points, colors, positions, pattern.NStops(), SkiaTileMode(pattern), 0, nullptr));
-    else
+
+    switch (pattern.mType)
+    {
+    case EPatternType::Linear:
+      paint.setShader(SkGradientShader::MakeLinear(points, colors, positions, numStops, SkiaTileMode(pattern), 0, nullptr));
+      break;
+
+    case EPatternType::Radial:
     {
       float xd = points[0].x() - points[1].x();
       float yd = points[0].y() - points[1].y();
       float radius = std::sqrt(xd * xd + yd * yd);
-        
-      paint.setShader(SkGradientShader::MakeRadial(points[0], radius, colors, positions, pattern.NStops(), SkiaTileMode(pattern), 0, nullptr));
+      paint.setShader(SkGradientShader::MakeRadial(points[0], radius, colors, positions, numStops, SkiaTileMode(pattern), 0, nullptr));
+      break;
+    }
+
+    case EPatternType::Sweep:
+    {
+      SkMatrix matrix = SkMatrix::MakeAll(m.mXX, m.mYX, 0, m.mXY, m.mYY, 0, 0, 0, 1);
+      
+      paint.setShader(SkGradientShader::MakeSweep(x1, y1, colors, nullptr, numStops, SkTileMode::kDecal,
+        0, 360 * positions[numStops - 1], 0, &matrix));
+
+      break;
+    }
+
+    default:
+      break;
     }
   }
     
   return paint;
 }
 
+END_IGRAPHICS_NAMESPACE
+END_IPLUG_NAMESPACE
+
 #pragma mark -
 
 IGraphicsSkia::IGraphicsSkia(IGEditorDelegate& dlg, int w, int h, int fps, float scale)
-: IGraphicsPathBase(dlg, w, h, fps, scale)
+: IGraphics(dlg, w, h, fps, scale)
 {
-  DBGMSG("IGraphics Skia @ %i FPS\n", fps);
+  mMainPath.setIsVolatile(true);
   
+#if defined IGRAPHICS_CPU
+  DBGMSG("IGraphics Skia CPU @ %i FPS\n", fps);
+#elif defined IGRAPHICS_METAL
+  DBGMSG("IGraphics Skia METAL @ %i FPS\n", fps);
+#elif defined IGRAPHICS_GL
+  DBGMSG("IGraphics Skia GL @ %i FPS\n", fps);
+#endif
   StaticStorage<Font>::Accessor storage(sFontCache);
   storage.Retain();
 }
@@ -224,16 +284,33 @@ bool IGraphicsSkia::BitmapExtSupported(const char* ext)
 {
   char extLower[32];
   ToLower(extLower, ext);
-  return (strstr(extLower, "png") != nullptr) /*|| (strstr(extLower, "jpg") != nullptr) || (strstr(extLower, "jpeg") != nullptr)*/;
+  return (strstr(extLower, "png") != nullptr) || (strstr(extLower, "jpg") != nullptr) || (strstr(extLower, "jpeg") != nullptr);
 }
 
 APIBitmap* IGraphicsSkia::LoadAPIBitmap(const char* fileNameOrResID, int scale, EResourceLocation location, const char* ext)
 {
+//#ifdef OS_IOS
+//  if (location == EResourceLocation::kPreloadedTexture)
+//  {
+//    assert(0 && "SKIA does not yet load KTX textures");
+//    GrMtlTextureInfo textureInfo;
+//    textureInfo.fTexture.retain((void*)(gTextureMap[fileNameOrResID]));
+//    id<MTLTexture> texture = (id<MTLTexture>) textureInfo.fTexture.get();
+//
+//    MTLPixelFormat pixelFormat = texture.pixelFormat;
+//
+//    auto grBackendTexture = GrBackendTexture(texture.width, texture.height, GrMipMapped::kNo, textureInfo);
+//
+//    sk_sp<SkImage> image = SkImage::MakeFromTexture(mGrContext.get(), grBackendTexture, kTopLeft_GrSurfaceOrigin, kBGRA_8888_SkColorType, kOpaque_SkAlphaType, nullptr);
+//    return new Bitmap(image, scale);
+//  }
+//  else
+//#endif
 #ifdef OS_WIN
   if (location == EResourceLocation::kWinBinary)
   {
     int size = 0;
-    const void* pData = LoadWinResource(fileNameOrResID, "png", size, GetWinModuleHandle());
+    const void* pData = LoadWinResource(fileNameOrResID, ext, size, GetWinModuleHandle());
     return new Bitmap(pData, size, scale);
   }
   else
@@ -241,34 +318,52 @@ APIBitmap* IGraphicsSkia::LoadAPIBitmap(const char* fileNameOrResID, int scale, 
   return new Bitmap(fileNameOrResID, scale);
 }
 
+APIBitmap* IGraphicsSkia::LoadAPIBitmap(const char* name, const void* pData, int dataSize, int scale)
+{
+  return new Bitmap(pData, dataSize, scale);
+}
+
 void IGraphicsSkia::OnViewInitialized(void* pContext)
 {
 #if defined IGRAPHICS_GL
   auto glInterface = GrGLMakeNativeInterface();
-  mGrContext = GrContext::MakeGL(glInterface);
+  mGrContext = GrDirectContext::MakeGL(glInterface);
 #elif defined IGRAPHICS_METAL
-  @autoreleasepool {
-    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-    id<MTLCommandQueue> commandQueue = [device newCommandQueue];
-    mGrContext = GrContext::MakeMetal(device, commandQueue);
-    mMTLDevice = device;
-    mMTLCommandQueue = commandQueue;
-    mMTLLayer = pContext;
-    ((CAMetalLayer*) pContext).device = device;
-  }
+  CAMetalLayer* pMTLLayer = (CAMetalLayer*) pContext;
+  id<MTLDevice> device = pMTLLayer.device;
+  id<MTLCommandQueue> commandQueue = [device newCommandQueue];
+  GrMtlBackendContext backendContext = {};
+  backendContext.fDevice.retain((__bridge GrMTLHandle) device);
+  backendContext.fQueue.retain((__bridge GrMTLHandle) commandQueue);
+  mGrContext = GrDirectContext::MakeMetal(backendContext);
+  mMTLDevice = (void*) device;
+  mMTLCommandQueue = (void*) commandQueue;
+  mMTLLayer = pContext;
 #endif
-    
+
   DrawResize();
 }
 
 void IGraphicsSkia::OnViewDestroyed()
 {
+  RemoveAllControls();
+
+#if defined IGRAPHICS_GL
+  mSurface = nullptr;
+  mScreenSurface = nullptr;
+  mGrContext = nullptr;
+#elif defined IGRAPHICS_METAL
+  [(id<MTLCommandQueue>) mMTLCommandQueue release];
+  mMTLCommandQueue = nullptr;
+  mMTLLayer = nullptr;
+  mMTLDevice = nullptr;
+#endif
 }
 
 void IGraphicsSkia::DrawResize()
 {
-  auto w = WindowWidth() * GetScreenScale();
-  auto h = WindowHeight() * GetScreenScale();
+  auto w = static_cast<int>(std::ceil(static_cast<float>(WindowWidth()) * GetScreenScale()));
+  auto h = static_cast<int>(std::ceil(static_cast<float>(WindowHeight()) * GetScreenScale()));
   
 #if defined IGRAPHICS_GL || defined IGRAPHICS_METAL
   if (mGrContext.get())
@@ -279,7 +374,8 @@ void IGraphicsSkia::DrawResize()
 #else
   #ifdef OS_WIN
     mSurface.reset();
-    const size_t bmpSize = sizeof(BITMAPINFOHEADER) + WindowWidth() * WindowHeight() * GetScreenScale() * sizeof(uint32_t);
+   
+    const size_t bmpSize = sizeof(BITMAPINFOHEADER) + (w * h * sizeof(uint32_t));
     mSurfaceMemory.Resize(bmpSize);
     BITMAPINFO* bmpInfo = reinterpret_cast<BITMAPINFO*>(mSurfaceMemory.Get());
     ZeroMemory(bmpInfo, sizeof(BITMAPINFO));
@@ -298,47 +394,56 @@ void IGraphicsSkia::DrawResize()
   #endif
 #endif
   if (mSurface)
+  {
     mCanvas = mSurface->getCanvas();
+    mCanvas->save();
+  }
 }
 
 void IGraphicsSkia::BeginFrame()
 {
-  int width = WindowWidth() * GetScreenScale();
-  int height = WindowHeight() * GetScreenScale();
-  
 #if defined IGRAPHICS_GL
   if (mGrContext.get())
   {
+    int width = WindowWidth() * GetScreenScale();
+    int height = WindowHeight() * GetScreenScale();
+    
     // Bind to the current main framebuffer
     int fbo = 0, samples = 0, stencilBits = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
     glGetIntegerv(GL_SAMPLES, &samples);
+#ifdef IGRAPHICS_GL3
+    glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_STENCIL, GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &stencilBits);
+#else
     glGetIntegerv(GL_STENCIL_BITS, &stencilBits);
+#endif
     
     GrGLFramebufferInfo fbinfo;
     fbinfo.fFBOID = fbo;
     fbinfo.fFormat = 0x8058;
 
-    auto backendRenderTarget = GrBackendRenderTarget(width, height, samples, stencilBits, fbinfo);
+    GrBackendRenderTarget backendRT(width, height, samples, stencilBits, fbinfo);
     
-    mScreenSurface = SkSurface::MakeFromBackendRenderTarget(mGrContext.get(), backendRenderTarget, kBottomLeft_GrSurfaceOrigin, kRGBA_8888_SkColorType, nullptr, nullptr);
+    mScreenSurface = SkSurface::MakeFromBackendRenderTarget(mGrContext.get(), backendRT, kBottomLeft_GrSurfaceOrigin, kRGBA_8888_SkColorType, nullptr, nullptr);
     assert(mScreenSurface);
   }
 #elif defined IGRAPHICS_METAL
   if (mGrContext.get())
   {
-    id<CAMetalDrawable> currentDrawable = [(CAMetalLayer*) mMTLLayer nextDrawable];
+    int width = WindowWidth() * GetScreenScale();
+    int height = WindowHeight() * GetScreenScale();
+    
+    id<CAMetalDrawable> drawable = [(CAMetalLayer*) mMTLLayer nextDrawable];
     
     GrMtlTextureInfo fbInfo;
-    fbInfo.fTexture = currentDrawable.texture;
-    
+    fbInfo.fTexture.retain((const void*)(drawable.texture));
     GrBackendRenderTarget backendRT(width, height, 1 /* sample count/MSAA */, fbInfo);
     
     mScreenSurface = SkSurface::MakeFromBackendRenderTarget(mGrContext.get(), backendRT, kTopLeft_GrSurfaceOrigin, kBGRA_8888_SkColorType, nullptr, nullptr);
     
-    mMTLDrawable = currentDrawable;
+    mMTLDrawable = (void*) drawable;
+    assert(mScreenSurface);
   }
-  assert(mScreenSurface);
 #endif
 
   IGraphics::BeginFrame();
@@ -347,12 +452,12 @@ void IGraphicsSkia::BeginFrame()
 void IGraphicsSkia::EndFrame()
 {
 #ifdef IGRAPHICS_CPU
-  #ifdef OS_MAC
+  #if defined OS_MAC || defined OS_IOS
     SkPixmap pixmap;
     mSurface->peekPixels(&pixmap);
     SkBitmap bmp;
-    bmp.installPixels(pixmap);
-    CGContext* pCGContext = (CGContextRef) mPlatformContext;
+    bmp.installPixels(pixmap);  
+    CGContext* pCGContext = (CGContextRef) GetPlatformContext();
     CGContextSaveGState(pCGContext);
     CGContextScaleCTM(pCGContext, 1.0 / GetScreenScale(), 1.0 / GetScreenScale());
     SkCGDrawBitmap(pCGContext, bmp, 0, 0);
@@ -361,15 +466,18 @@ void IGraphicsSkia::EndFrame()
     auto w = WindowWidth() * GetScreenScale();
     auto h = WindowHeight() * GetScreenScale();
     BITMAPINFO* bmpInfo = reinterpret_cast<BITMAPINFO*>(mSurfaceMemory.Get());
-    HWND hwnd = (HWND)GetWindow();
-    HDC dc = GetDC(hwnd);
-    StretchDIBits(dc, 0, 0, w, h, 0, 0, w, h, bmpInfo->bmiColors, bmpInfo,  DIB_RGB_COLORS, SRCCOPY);
-    ReleaseDC(hwnd, dc);
+    HWND hWnd = (HWND) GetWindow();
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hWnd, &ps);
+    StretchDIBits(hdc, 0, 0, w, h, 0, 0, w, h, bmpInfo->bmiColors, bmpInfo, DIB_RGB_COLORS, SRCCOPY);
+    ReleaseDC(hWnd, hdc);
+    EndPaint(hWnd, &ps);
   #else
     #error NOT IMPLEMENTED
   #endif
-#else
+#else // GPU
   mSurface->draw(mScreenSurface->getCanvas(), 0.0, 0.0, nullptr);
+    
   mScreenSurface->getCanvas()->flush();
   
   #ifdef IGRAPHICS_METAL
@@ -385,9 +493,8 @@ void IGraphicsSkia::EndFrame()
 void IGraphicsSkia::DrawBitmap(const IBitmap& bitmap, const IRECT& dest, int srcX, int srcY, const IBlend* pBlend)
 {
   SkPaint p;
-  SkRect skrect;
   
-  p.setFilterQuality(kHigh_SkFilterQuality);
+  p.setAntiAlias(true);
   p.setBlendMode(SkiaBlendMode(pBlend));
   if (pBlend)
     p.setAlpha(Clip(static_cast<int>(pBlend->mWeight * 255), 0, 255));
@@ -398,27 +505,36 @@ void IGraphicsSkia::DrawBitmap(const IBitmap& bitmap, const IRECT& dest, int src
   double scale2 = bitmap.GetScale() * bitmap.GetDrawScale();
   
   mCanvas->save();
-  skrect.set(dest.L, dest.T, dest.R, dest.B);
-  mCanvas->clipRect(skrect);
+  mCanvas->clipRect(SkiaRect(dest));
   mCanvas->translate(dest.L, dest.T);
   mCanvas->scale(scale1, scale1);
   mCanvas->translate(-srcX * scale2, -srcY * scale2);
   
+#ifdef IGRAPHICS_CPU
+  auto samplingOptions = SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kNone);
+#else
+  auto samplingOptions = SkSamplingOptions(SkCubicResampler::Mitchell());
+#endif
+    
   if (image->mIsSurface)
-    image->mSurface->draw(mCanvas, 0.0, 0.0, &p);
+    image->mSurface->draw(mCanvas, 0.0, 0.0, samplingOptions, &p);
   else
-    mCanvas->drawImage(image->mImage, 0.0, 0.0, &p);
+    mCanvas->drawImage(image->mImage, 0.0, 0.0, samplingOptions, &p);
     
   mCanvas->restore();
 }
 
 void IGraphicsSkia::PathArc(float cx, float cy, float r, float a1, float a2, EWinding winding)
 {
-  float sweep = (a2 - a1);
+  SkPath arc;
+  arc.setIsVolatile(true);
   
+  float sweep = (a2 - a1);
+
   if (sweep >= 360.f || sweep <= -360.f)
   {
-    mMainPath.addCircle(cx, cy, r);
+    arc.addCircle(cx, cy, r);
+    mMainPath.addPath(arc, mMatrix, SkPath::kAppend_AddPathMode);
   }
   else
   {
@@ -433,13 +549,18 @@ void IGraphicsSkia::PathArc(float cx, float cy, float r, float a1, float a2, EWi
         sweep -= 360.f;
     }
       
-    mMainPath.arcTo(SkRect::MakeLTRB(cx - r, cy - r, cx + r, cy + r), a1 - 90.f, sweep, false);
+    arc.arcTo(SkRect::MakeLTRB(cx - r, cy - r, cx + r, cy + r), a1 - 90.f, sweep, false);
+    mMainPath.addPath(arc, mMatrix, SkPath::kExtend_AddPathMode);
   }
 }
 
 IColor IGraphicsSkia::GetPoint(int x, int y)
 {
-  return COLOR_BLACK; //TODO:
+  SkBitmap bitmap;
+  bitmap.allocPixels(SkImageInfo::MakeN32Premul(1, 1));
+  mCanvas->readPixels(bitmap, x, y);
+  auto color = bitmap.getColor(0,0);
+  return IColor(SkColorGetA(color), SkColorGetR(color), SkColorGetG(color), SkColorGetB(color));
 }
 
 bool IGraphicsSkia::LoadAPIFont(const char* fontID, const PlatformFontPtr& font)
@@ -472,7 +593,7 @@ void IGraphicsSkia::PrepareAndMeasureText(const IText& text, const char* str, IR
 {
   SkFontMetrics metrics;
   SkPaint paint;
-  SkRect bounds;
+  //SkRect bounds;
   
   StaticStorage<Font>::Accessor storage(sFontCache);
   Font* pFont = storage.Find(text.mFont);
@@ -480,16 +601,15 @@ void IGraphicsSkia::PrepareAndMeasureText(const IText& text, const char* str, IR
   assert(pFont && "No font found - did you forget to load it?");
 
   font.setTypeface(pFont->mTypeface);
-  font.setHinting(SkFontHinting::kNone);
+  font.setHinting(SkFontHinting::kSlight);
   font.setForceAutoHinting(false);
   font.setSubpixel(true);
   font.setSize(text.mSize * pFont->mData->GetHeightEMRatio());
   
   // Draw / measure
-  font.measureText(str, strlen(str), SkTextEncoding::kUTF8, &bounds);
+  const double textWidth = font.measureText(str, strlen(str), SkTextEncoding::kUTF8, nullptr/* &bounds*/);
   font.getMetrics(&metrics);
   
-  const double textWidth = bounds.width();// + textExtents.x_bearing;
   const double textHeight = text.mSize;
   const double ascender = metrics.fAscent;
   const double descender = metrics.fDescent;
@@ -511,14 +631,16 @@ void IGraphicsSkia::PrepareAndMeasureText(const IText& text, const char* str, IR
   r = IRECT((float) x, (float) y + ascender, (float) (x + textWidth), (float) (y + ascender + textHeight));
 }
 
-void IGraphicsSkia::DoMeasureText(const IText& text, const char* str, IRECT& bounds) const
+float IGraphicsSkia::DoMeasureText(const IText& text, const char* str, IRECT& bounds) const
 {
   SkFont font;
+  font.setEdging(SkFont::Edging::kSubpixelAntiAlias);
 
   IRECT r = bounds;
   double x, y;
   PrepareAndMeasureText(text, str, bounds, x, y, font);
   DoMeasureTextRotation(text, r, bounds);
+  return bounds.W();
 }
 
 void IGraphicsSkia::DoDrawText(const IText& text, const char* str, const IRECT& bounds, const IBlend* pBlend)
@@ -526,8 +648,10 @@ void IGraphicsSkia::DoDrawText(const IText& text, const char* str, const IRECT& 
   IRECT measured = bounds;
   
   SkFont font;
+  font.setEdging(SkFont::Edging::kSubpixelAntiAlias);
+
   double x, y;
-  
+
   PrepareAndMeasureText(text, str, measured, x, y, font);
   PathTransformSave();
   DoTextRotation(text, bounds, measured);
@@ -569,13 +693,13 @@ void IGraphicsSkia::PathStroke(const IPattern& pattern, float thickness, const I
       dashArray[i + 1] = options.mDash.GetArray()[(i + 1) % dashCount];
     }
     
-    paint.setPathEffect(SkDashPathEffect::Make(dashArray, dashMax, 0));
+    paint.setPathEffect(SkDashPathEffect::Make(dashArray, dashMax, options.mDash.GetOffset()));
   }
   
   paint.setStrokeWidth(thickness);
   paint.setStrokeMiter(options.mMiterLimit);
-  
-  mCanvas->drawPath(mMainPath, paint);
+    
+  RenderPath(paint);
   
   if (!options.mPreserve)
     mMainPath.reset();
@@ -587,19 +711,112 @@ void IGraphicsSkia::PathFill(const IPattern& pattern, const IFillOptions& option
   paint.setStyle(SkPaint::kFill_Style);
   
   if (options.mFillRule == EFillRule::Winding)
-    mMainPath.setFillType(SkPath::kWinding_FillType);
+    mMainPath.setFillType(SkPathFillType::kWinding);
   else
-    mMainPath.setFillType(SkPath::kEvenOdd_FillType);
+    mMainPath.setFillType(SkPathFillType::kEvenOdd);
   
-  mCanvas->drawPath(mMainPath, paint);
+  RenderPath(paint);
   
   if (!options.mPreserve)
     mMainPath.reset();
 }
 
+#ifdef IGRAPHICS_DRAWFILL_DIRECT
+void IGraphicsSkia::DrawRect(const IColor& color, const IRECT& bounds, const IBlend* pBlend, float thickness)
+{
+  auto paint = SkiaPaint(color, pBlend);
+  paint.setStyle(SkPaint::Style::kStroke_Style);
+  paint.setStrokeWidth(thickness);
+  mCanvas->drawRect(SkiaRect(bounds), paint);
+}
+
+void IGraphicsSkia::DrawRoundRect(const IColor& color, const IRECT& bounds, float cornerRadius, const IBlend* pBlend, float thickness)
+{
+  auto paint = SkiaPaint(color, pBlend);
+  paint.setStyle(SkPaint::Style::kStroke_Style);
+  paint.setStrokeWidth(thickness);
+  mCanvas->drawRoundRect(SkiaRect(bounds), cornerRadius, cornerRadius, paint);
+}
+
+void IGraphicsSkia::DrawArc(const IColor& color, float cx, float cy, float r, float a1, float a2, const IBlend* pBlend, float thickness)
+{
+  auto paint = SkiaPaint(color, pBlend);
+  paint.setStyle(SkPaint::Style::kStroke_Style);
+  paint.setStrokeWidth(thickness);
+  mCanvas->drawArc(SkRect::MakeLTRB(cx - r, cy - r, cx + r, cy + r), a1 - 90.f, (a2 - a1), false, paint);
+}
+
+void IGraphicsSkia::DrawCircle(const IColor& color, float cx, float cy, float r, const IBlend* pBlend, float thickness)
+{
+  auto paint = SkiaPaint(color, pBlend);
+  paint.setStyle(SkPaint::Style::kStroke_Style);
+  paint.setStrokeWidth(thickness);
+  mCanvas->drawCircle(cx, cy, r, paint);
+}
+
+void IGraphicsSkia::DrawEllipse(const IColor& color, const IRECT& bounds, const IBlend* pBlend, float thickness)
+{
+  auto paint = SkiaPaint(color, pBlend);
+  paint.setStyle(SkPaint::Style::kStroke_Style);
+  paint.setStrokeWidth(thickness);
+  mCanvas->drawOval(SkiaRect(bounds), paint);
+}
+
+void IGraphicsSkia::FillRect(const IColor& color, const IRECT& bounds, const IBlend* pBlend)
+{
+  auto paint = SkiaPaint(color, pBlend);
+  paint.setStyle(SkPaint::Style::kFill_Style);
+  mCanvas->drawRect(SkiaRect(bounds), paint);
+}
+
+void IGraphicsSkia::FillRoundRect(const IColor& color, const IRECT& bounds, float cornerRadius, const IBlend* pBlend)
+{
+  auto paint = SkiaPaint(color, pBlend);
+  paint.setStyle(SkPaint::Style::kFill_Style);
+  mCanvas->drawRoundRect(SkiaRect(bounds), cornerRadius, cornerRadius, paint);
+}
+
+void IGraphicsSkia::FillArc(const IColor& color, float cx, float cy, float r, float a1, float a2, const IBlend* pBlend)
+{
+  auto paint = SkiaPaint(color, pBlend);
+  paint.setStyle(SkPaint::Style::kFill_Style);
+  mCanvas->drawArc(SkRect::MakeLTRB(cx - r, cy - r, cx + r, cy + r), a1 - 90.f, (a2 - a1), true, paint);
+}
+
+void IGraphicsSkia::FillCircle(const IColor& color, float cx, float cy, float r, const IBlend* pBlend)
+{
+  auto paint = SkiaPaint(color, pBlend);
+  paint.setStyle(SkPaint::Style::kFill_Style);
+  mCanvas->drawCircle(cx, cy, r, paint);
+}
+
+void IGraphicsSkia::FillEllipse(const IColor& color, const IRECT& bounds, const IBlend* pBlend)
+{
+  auto paint = SkiaPaint(color, pBlend);
+  paint.setStyle(SkPaint::Style::kFill_Style);
+  mCanvas->drawOval(SkiaRect(bounds), paint);
+}
+#endif
+
+void IGraphicsSkia::RenderPath(SkPaint& paint)
+{
+  SkMatrix invMatrix;
+    
+  if (!mMatrix.isIdentity() && mMatrix.invert(&invMatrix))
+  {
+    SkPath path;
+    path.setIsVolatile(true);
+    mMainPath.transform(invMatrix, &path);
+    mCanvas->drawPath(path, paint);
+  }
+  else
+  {
+    mCanvas->drawPath(mMainPath, paint);
+  }
+}
+
 void IGraphicsSkia::PathTransformSetMatrix(const IMatrix& m)
 {
-  double scale = GetScreenScale() * GetDrawScale();
   double xTranslate = 0.0;
   double yTranslate = 0.0;
     
@@ -613,26 +830,48 @@ void IGraphicsSkia::PathTransformSetMatrix(const IMatrix& m)
     xTranslate = -bounds.L;
     yTranslate = -bounds.T;
   }
-    
-  SkMatrix globalMatrix = SkMatrix::MakeScale(scale);
-  SkMatrix skMatrix = SkMatrix::MakeAll(m.mXX, m.mXY, m.mTX, m.mYX, m.mYY, m.mTY, 0, 0, 1);
+
+  mMatrix = SkMatrix::MakeAll(m.mXX, m.mXY, m.mTX, m.mYX, m.mYY, m.mTY, 0, 0, 1);
+  auto scale = GetTotalScale();
+  SkMatrix globalMatrix = SkMatrix::Scale(scale, scale);
+  mClipMatrix = SkMatrix();
+  mFinalMatrix = mMatrix;
   globalMatrix.preTranslate(xTranslate, yTranslate);
-  skMatrix.postConcat(globalMatrix);
-  mCanvas->setMatrix(skMatrix);
+  mClipMatrix.postConcat(globalMatrix);
+  mFinalMatrix.postConcat(globalMatrix);
+  mCanvas->setMatrix(mFinalMatrix);
 }
 
 void IGraphicsSkia::SetClipRegion(const IRECT& r)
 {
-  SkRect skrect;
-  skrect.set(r.L, r.T, r.R, r.B);
-  mCanvas->restore();
+  mCanvas->restoreToCount(0);
   mCanvas->save();
-  mCanvas->clipRect(skrect);
+  mCanvas->setMatrix(mClipMatrix);
+  mCanvas->clipRect(SkiaRect(r));
+  mCanvas->setMatrix(mFinalMatrix);
 }
 
-APIBitmap* IGraphicsSkia::CreateAPIBitmap(int width, int height, int scale, double drawScale)
+APIBitmap* IGraphicsSkia::CreateAPIBitmap(int width, int height, float scale, double drawScale, bool cacheable)
 {
-  return new Bitmap(mGrContext.get(), width, height, scale, drawScale);
+  sk_sp<SkSurface> surface;
+  
+  #ifndef IGRAPHICS_CPU
+  SkImageInfo info = SkImageInfo::MakeN32Premul(width, height);
+  if (cacheable)
+  {
+    surface = SkSurface::MakeRasterN32Premul(width, height);
+  }
+  else
+  {
+    surface = SkSurface::MakeRenderTarget(mGrContext.get(), SkBudgeted::kYes, info);
+  }
+  #else
+  surface = SkSurface::MakeRasterN32Premul(width, height);
+  #endif
+
+  surface->getCanvas()->save();
+
+  return new Bitmap(std::move(surface), width, height, scale, drawScale);
 }
 
 void IGraphicsSkia::UpdateLayer()
@@ -689,7 +928,7 @@ void IGraphicsSkia::ApplyShadowMask(ILayerPtr& layer, RawBitmapData& mask, const
   IBlend blend(EBlend::Default, shadow.mOpacity);
   pCanvas->setMatrix(m);
   pCanvas->drawImage(image.get(), shadow.mXOffset * scale, shadow.mYOffset * scale);
-  m = SkMatrix::MakeScale(scale);
+  m = SkMatrix::Scale(scale, scale);
   pCanvas->setMatrix(m);
   pCanvas->translate(-layer->Bounds().L, -layer->Bounds().T);
   SkPaint p = SkiaPaint(shadow.mPattern, &blend);
@@ -704,14 +943,25 @@ void IGraphicsSkia::ApplyShadowMask(ILayerPtr& layer, RawBitmapData& mask, const
   }
 }
 
+void IGraphicsSkia::DrawFastDropShadow(const IRECT& innerBounds, const IRECT& outerBounds, float xyDrop, float roundness, float blur, IBlend* pBlend)
+{
+  SkRect r = SkiaRect(innerBounds.GetTranslated(xyDrop, xyDrop));
+  
+  SkPaint paint = SkiaPaint(COLOR_BLACK_DROP_SHADOW, pBlend);
+  paint.setStyle(SkPaint::Style::kFill_Style);
+  
+  paint.setMaskFilter(SkMaskFilter::MakeBlur(kSolid_SkBlurStyle, blur * 0.5)); // 0.5 seems to match nanovg
+  mCanvas->drawRoundRect(r, roundness, roundness, paint);
+}
+
 const char* IGraphicsSkia::GetDrawingAPIStr()
 {
 #ifdef IGRAPHICS_CPU
   return "SKIA | CPU";
 #elif defined IGRAPHICS_GL2
-  return "SKIA | OpenGL2";
+  return "SKIA | GL2";
 #elif defined IGRAPHICS_GL3
-  return "SKIA | OpenGL3";
+  return "SKIA | GL3";
 #elif defined IGRAPHICS_METAL
   return "SKIA | Metal";
 #endif

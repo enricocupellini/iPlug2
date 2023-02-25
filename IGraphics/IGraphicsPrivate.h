@@ -15,6 +15,7 @@
  * @{
  */
 
+#include <codecvt>
 #include <string>
 #include <memory>
 
@@ -24,27 +25,33 @@
 #include "ptrlist.h"
 #include "heapbuf.h"
 
-#include "nanosvg.h"
+#if defined IGRAPHICS_SKIA && !defined IGRAPHICS_NO_SKIA_SVG
+#define SVG_USE_SKIA
+#endif
+
+#ifdef SVG_USE_SKIA
+  #pragma warning( push )
+  #pragma warning( disable : 4244 )
+  #pragma warning( disable : 5030 )
+  #include "SkSVGDOM.h"
+  #include "include/core/SkCanvas.h"
+  #include "include/core/SkStream.h"
+  #include "src/xml/SkDOM.h"
+  #pragma warning( pop )
+#else
+  #include "nanosvg.h"
+#endif
 
 #include "IPlugPlatform.h"
 
-#ifdef IGRAPHICS_AGG
-  #include "IGraphicsAGG_src.h"
-  #define BITMAP_DATA_TYPE agg::pixel_map*
-#elif defined IGRAPHICS_CAIRO
-  #if defined OS_MAC || defined OS_LINUX
-    #include "cairo/cairo.h"
-  #elif defined OS_WIN
-    #include "cairo/src/cairo.h"
-  #else
-    #error NOT IMPLEMENTED
-  #endif
-  #define BITMAP_DATA_TYPE cairo_surface_t*
-#elif defined IGRAPHICS_NANOVG
+#if defined IGRAPHICS_NANOVG
   #define BITMAP_DATA_TYPE int;
 #elif defined IGRAPHICS_SKIA
+  #pragma warning( push )
+  #pragma warning( disable : 4244 )
   #include "SkImage.h"
   #include "SkSurface.h"
+  #pragma warning( pop )
   struct SkiaDrawable
   {
     bool mIsSurface;
@@ -52,9 +59,6 @@
     sk_sp<SkSurface> mSurface;
   };
   #define BITMAP_DATA_TYPE SkiaDrawable*
-#elif defined IGRAPHICS_LICE
-  #include "lice.h"
-  #define BITMAP_DATA_TYPE LICE_IBitmap*
 #elif defined IGRAPHICS_CANVAS
   #include <emscripten.h>
   #include <emscripten/val.h>
@@ -68,7 +72,6 @@
   #define FONT_DESCRIPTOR_TYPE CTFontDescriptorRef
 #elif defined OS_WIN
   #include "wingdi.h"
-  #include "Stringapiset.h"
   #define FONT_DESCRIPTOR_TYPE HFONT
 #elif defined OS_WEB
   #define FONT_DESCRIPTOR_TYPE std::pair<WDL_String, WDL_String>*
@@ -82,7 +85,7 @@ using BitmapData = BITMAP_DATA_TYPE;
 using FontDescriptor = FONT_DESCRIPTOR_TYPE;
 using RawBitmapData = WDL_TypedBuf<uint8_t>;
 
-/** A bitmap abstraction around the different drawing back end bitmap representations.
+/** A base class interface for a bitmap abstraction around the different drawing back end bitmap representations.
  * In most cases it does own the bitmap data, the exception being with NanoVG, where the image is loaded onto the GPU as a texture,
  * but still needs to be freed. Most of the time  end-users will deal with IBitmap rather than APIBitmap, which is used behind the scenes. */
 class APIBitmap
@@ -95,7 +98,7 @@ public:
   * @param h The height of the bitmap
   * @param scale An integer representing the scale of this bitmap in relation to a 1:1 pixel screen, e.g. 2 for an @2x bitmap
   * @param drawScale The draw scale at which this API bitmap was created (used in the context of layers) */
-  APIBitmap(BitmapData pBitmap, int w, int h, int scale, float drawScale)
+  APIBitmap(BitmapData pBitmap, int w, int h, float scale, float drawScale)
   : mBitmap(pBitmap)
   , mWidth(w)
   , mHeight(h)
@@ -120,9 +123,9 @@ public:
    * @param pBitmap pointer or integer index (NanoVG) to the image data
    * @param w The width of the bitmap
    * @param h The height of the bitmap
-   * @param scale An integer representing the scale of this bitmap in relation to a 1:1 pixel screen, e.g. 2 for an @2x bitmap
+   * @param scale The scale of this bitmap in relation to a 1:1 pixel screen, e.g. 2 for an @2x bitmap
    * @param drawScale The draw scale at which this API bitmap was created (used in the context of layers) */
-  void SetBitmap(BitmapData pBitmap, int w, int h, int scale, float drawScale)
+  void SetBitmap(BitmapData pBitmap, int w, int h, float scale, float drawScale)
   {
     mBitmap = pBitmap;
     mWidth = w;
@@ -131,26 +134,26 @@ public:
     mDrawScale = drawScale;
   }
 
-  /** @return BitmapData /todo */
+  /** @return BitmapData Get the Bitmap data linked to this APIBitmap */
   BitmapData GetBitmap() const { return mBitmap; }
 
-  /** /todo */
+  /** @return the width of the bitmap */
   int GetWidth() const { return mWidth; }
 
-  /** /todo */
+  /** @return the height of the bitmap */
   int GetHeight() const { return mHeight; }
 
-  /** /todo */
-  int GetScale() const { return mScale; }
+  /** @return the scale of the bitmap */
+  float GetScale() const { return mScale; }
   
-  /** /todo */
+  /** @return the draw scale of the bitmap */
   float GetDrawScale() const { return mDrawScale; }
 
 private:
   BitmapData mBitmap; // for most drawing APIs BitmapData is a pointer. For Nanovg it is an integer index
   int mWidth;
   int mHeight;
-  int mScale;
+  float mScale;
   float mDrawScale;
 };
 
@@ -175,8 +178,8 @@ public:
       {
         mUnitsPerEM = GetUInt16(mHeadLocation + 18);
         mMacStyle = GetUInt16(mHeadLocation + 44);
-        mFamily = GetFontString(1);
-        mStyle = GetFontString(2);
+        mFamily = SearchFontString(1);
+        mStyle = SearchFontString(2);
         mAscender = GetSInt16(mHheaLocation + 4);
         mDescender = GetSInt16(mHheaLocation + 6);
         mLineGap = GetSInt16(mHheaLocation + 8);
@@ -184,7 +187,7 @@ public:
     }
   }
   
-  bool IsValid() const       { return mData && mHeadLocation && mNameLocation && mHheaLocation; }
+  bool IsValid() const      { return mData && mHeadLocation && mNameLocation && mHheaLocation; }
   
   const WDL_String& GetFamily() const   { return mFamily; }
   const WDL_String& GetStyle() const    { return mStyle; }
@@ -206,6 +209,9 @@ public:
   int16_t GetLineHeight() const  { return (mAscender - mDescender) + mLineGap; }
   
 private:
+    
+  enum class EStringID { Mac, Windows };
+    
   bool MatchTag(uint32_t loc, const char* tag)
   {
     return mData[loc+0] == tag[0] && mData[loc+1] == tag[1] && mData[loc+2] == tag[2] && mData[loc+3] == tag[3];
@@ -225,17 +231,35 @@ private:
     return 0;
   }
   
-  WDL_String GetFontString(int nameID)
+  WDL_String SearchFontString(int nameID)
   {
-#ifdef OS_WIN
+    WDL_String str = GetFontString(nameID, EStringID::Windows);
+    
+    if (str.GetLength())
+      return str;
+    
+    return GetFontString(nameID, EStringID::Mac);
+  }
+    
+  WDL_String GetFontString(int nameID, EStringID stringID)
+  {
+    // Default to windows values
+      
     int platformID = 3;
     int encodingID = 1;
     int languageID = 0x409;
-#else
-    int platformID = 1;
-    int encodingID = 0;
-    int languageID = 0;
-#endif
+      
+    switch (stringID)
+    {
+      case EStringID::Mac:
+        platformID = 1;
+        encodingID = 0;
+        languageID = 0;
+        break;
+            
+      case EStringID::Windows:
+        break;
+    }
     
     for (uint16_t i = 0; i < GetUInt16(mNameLocation + 2); ++i)
     {
@@ -247,22 +271,31 @@ private:
         uint32_t stringLocation = GetUInt16(mNameLocation + 4) + GetUInt16(loc + 10);
         uint16_t length = GetUInt16(loc + 8);
         
-#ifdef OS_WIN
-        WDL_TypedBuf<WCHAR> utf16;
-        WDL_TypedBuf<char> utf8;
-        
-        utf16.Resize(length / sizeof(WCHAR));
-        
-        for (int j = 0; j < length; j++)
-          utf16.Get()[j] = GetUInt16(mNameLocation + stringLocation + j * 2);
-        
-        int convertedLength = WideCharToMultiByte(CP_UTF8, 0, utf16.Get(), utf16.GetSize(), 0, 0, NULL, NULL);
-        utf8.Resize(convertedLength);
-        WideCharToMultiByte(CP_UTF8, 0, utf16.Get(), utf16.GetSize(), utf8.Get(), utf8.GetSize(), NULL, NULL);
-        return WDL_String(utf8.Get(), convertedLength);
-#else
-        return WDL_String((const char*)(mData + mNameLocation + stringLocation), length);
-#endif
+        switch (stringID)
+        {
+          case EStringID::Windows:
+          {
+            WDL_TypedBuf<char> utf8;
+            WDL_TypedBuf<char16_t> utf16;
+            utf8.Resize((length * 3) / 2);
+            utf16.Resize(length / sizeof(char16_t));
+            
+            for (int j = 0; j < length; j++)
+              utf16.Get()[j] = GetUInt16(mNameLocation + stringLocation + j * 2);
+            
+            std::codecvt_utf8_utf16<char16_t> conv;
+            const char16_t *a;
+            char *b;
+            mbstate_t mbs;
+            memset(&mbs, 0, sizeof(mbs));
+            conv.out(mbs, utf16.Get(), utf16.Get() + utf16.GetSize(), a, utf8.Get(), utf8.Get() + utf8.GetSize(), b);
+            
+            return WDL_String(utf8.Get(), (int) (b - utf8.Get()));
+          }
+            
+          case EStringID::Mac:
+             return WDL_String((const char*)(mData + mNameLocation + stringLocation), length);
+        }
       }
     }
     
@@ -329,7 +362,7 @@ private:
   // Font Identifiers
   WDL_String mFamily;
   WDL_String mStyle;
-  uint16_t mMacStyle;
+  uint16_t mMacStyle = 0;
   
   // Metrics
   uint16_t mUnitsPerEM = 0;
@@ -377,7 +410,7 @@ private:
 /** IFontDataPtr is a managed pointer for transferring the ownership of font data */
 using IFontDataPtr = std::unique_ptr<IFontData>;
 
-/** /todo */
+/** \todo */
 class PlatformFont
 {
 public:
@@ -399,12 +432,12 @@ protected:
       IFontInfo fontInfo(data, dataSize, idx);
       
       if (!fontInfo.IsValid())
-      return -1;
+        return -1;
       
       const WDL_String& style = fontInfo.GetStyle();
       
       if (style.GetLength() && (!styleName[0] || !strcmp(style.Get(), styleName)))
-      return idx;
+        return idx;
     }
   }
 
@@ -413,11 +446,28 @@ protected:
 
 using PlatformFontPtr = std::unique_ptr<PlatformFont>;
 
+#ifdef SVG_USE_SKIA
+struct SVGHolder
+{
+  SVGHolder(sk_sp<SkSVGDOM> svgDom)
+  : mSVGDom(svgDom)
+  {
+  }
+  
+  ~SVGHolder()
+  {
+    mSVGDom = nullptr;
+  }
+  
+  SVGHolder(const SVGHolder&) = delete;
+  SVGHolder& operator=(const SVGHolder&) = delete;
+  
+  sk_sp<SkSVGDOM> mSVGDom;
+};
+#else
 /** Used internally to manage SVG data*/
 struct SVGHolder
 {
-  NSVGimage* mImage = nullptr;
-  
   SVGHolder(NSVGimage* pImage)
   : mImage(pImage)
   {
@@ -433,7 +483,10 @@ struct SVGHolder
   
   SVGHolder(const SVGHolder&) = delete;
   SVGHolder& operator=(const SVGHolder&) = delete;
+  
+  NSVGimage* mImage = nullptr;
 };
+#endif
 
 /** Used internally to store data statically, making sure memory is not wasted when there are multiple plug-in instances loaded */
 template <class T>
@@ -471,7 +524,7 @@ public:
   StaticStorage& operator=(const StaticStorage&) = delete;
     
 private:
-  /** /todo */
+  /** \todo */
   struct DataKey
   {
     // N.B. - hashID is not guaranteed to be unique
@@ -481,19 +534,19 @@ private:
     std::unique_ptr<T> data;
   };
   
-  /** /todo 
-   * @param str /todo
-   * @return size_t /todo */
+  /** \todo 
+   * @param str \todo
+   * @return size_t \todo */
   size_t Hash(const char* str)
   {
     std::string string(str);
     return std::hash<std::string>()(string);
   }
 
-  /** /todo 
-   * @param str /todo
-   * @param scale /todo
-   * @return T* /todo */
+  /** \todo 
+   * @param str \todo
+   * @param scale \todo
+   * @return T* \todo */
   T* Find(const char* str, double scale = 1.)
   {
     WDL_String cacheName(str);
@@ -513,10 +566,10 @@ private:
     return nullptr;
   }
 
-  /** /todo 
-   * @param pData /todo
-   * @param str /todo
-   * @param scale /todo scale where 2x = retina, omit if not needed */
+  /** \todo 
+   * @param pData \todo
+   * @param str \todo
+   * @param scale \todo scale where 2x = retina, omit if not needed */
   void Add(T* pData, const char* str, double scale = 1.)
   {
     DataKey* pKey = mDatas.Add(new DataKey);
@@ -532,7 +585,7 @@ private:
     //DBGMSG("adding %s to the static storage at %.1fx the original scale\n", str, scale);
   }
 
-  /** /todo @param pData /todo */
+  /** \todo @param pData \todo */
   void Remove(T* pData)
   {
     for (int i = 0; i < mDatas.GetSize(); ++i)
@@ -545,28 +598,39 @@ private:
     }
   }
 
-  /** /todo  */
+  /** \todo  */
   void Clear()
   {
     mDatas.Empty(true);
   };
 
-  /** /todo  */
+  /** \todo  */
   void Retain()
   {
     mCount++;
   }
   
-  /** /todo  */
+  /** \todo  */
   void Release()
   {
     if (--mCount == 0)
       Clear();
   }
     
-  int mCount;
+  int mCount = 0;
   WDL_Mutex mMutex;
   WDL_PtrList<DataKey> mDatas;
+};
+
+/** Encapsulate an xy point in one struct */
+struct IVec2
+{
+  float x, y;
+  IVec2() = default;
+  IVec2(float x, float y) : x(x), y(y) {}
+  
+  IVec2 operator-(const IVec2 b) { return IVec2{x-b.x, y-b.y}; }
+  IVec2 operator+(const IVec2 b) { return IVec2{x+b.x, y+b.y}; }
 };
 
 END_IGRAPHICS_NAMESPACE

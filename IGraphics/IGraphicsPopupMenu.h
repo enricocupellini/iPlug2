@@ -61,8 +61,8 @@ public:
     }
     
     Item (const char* str, IPopupMenu* pSubMenu)
-    : mFlags(kNoFlags)
-    , mSubmenu(pSubMenu)
+    : mSubmenu(pSubMenu)
+    , mFlags(kNoFlags)
     {
       SetText(str);
     }
@@ -93,36 +93,41 @@ public:
       return true;
     }
     
-    void SetChecked(bool state)
+    void SetEnabled(bool state) { SetFlag(kDisabled, !state); }
+    void SetChecked(bool state) { SetFlag(kChecked, state); }
+    void SetTitle(bool state) {SetFlag(kTitle, state); }
+    void SetSubmenu(IPopupMenu* pSubmenu) { mSubmenu.reset(pSubmenu); }
+
+  protected:
+    void SetFlag(Flags flag, bool state)
     {
       if (state)
-        mFlags |= kChecked;
+        mFlags |= flag;
       else
-        mFlags &= ~kChecked;
+        mFlags &= ~flag;
     }
-    
-  protected:
+
     WDL_String mText;
     std::unique_ptr<IPopupMenu> mSubmenu;
     int mFlags;
     int mTag = -1;
   };
   
-  using IPopupFunction = std::function<void(int indexInMenu, IPopupMenu::Item* itemChosen)>;
-
   #pragma mark -
   
-  IPopupMenu(int prefix = 0, bool multicheck = false, const std::initializer_list<const char*>& items = {})
+  IPopupMenu(const char* rootTitle = "", int prefix = 0, bool multicheck = false, const std::initializer_list<const char*>& items = {})
   : mPrefix(prefix)
   , mCanMultiCheck(multicheck)
+  , mRootTitle(rootTitle)
   {
     for (auto& item : items)
       AddItem(item);
   }
   
-  IPopupMenu(const std::initializer_list<const char*>& items, IPopupFunction func)
+  IPopupMenu(const char* rootTitle, const std::initializer_list<const char*>& items, IPopupFunction func = nullptr)
   : mPrefix(0)
   , mCanMultiCheck(false)
+  , mRootTitle(rootTitle)
   {
     for (auto& item : items)
       AddItem(item);
@@ -210,6 +215,8 @@ public:
   void SetChosenItemIdx(int index) { mChosenItemIdx = index; };
   int GetChosenItemIdx() const { return mChosenItemIdx; }
   int NItems() const { return mMenuItems.GetSize(); }
+  int NItemsPerColumn() const { return mNItemsPerColumn; }
+  void SetNItemsPerColumn(int nItemsPerColumn) { mNItemsPerColumn = nItemsPerColumn; }
   int GetPrefix() const { return mPrefix; }
   bool GetCanMultiCheck() const { return mCanMultiCheck; }
 
@@ -250,7 +257,7 @@ public:
   }
   
   void SetMultiCheck(bool multicheck) { mCanMultiCheck = multicheck; }
-  
+
   void Clear(bool resetEverything = true)
   {
     if(resetEverything)
@@ -304,15 +311,27 @@ public:
   
   void ExecFunction()
   {
-    mPopupFunc(mChosenItemIdx, GetItem(mChosenItemIdx));
+    mPopupFunc(this);
+  }
+  
+  const char* GetRootTitle() const
+  {
+    return mRootTitle.Get();
+  }
+  
+  void SetRootTitle(const char* rootTitle)
+  {
+    return mRootTitle.Set(rootTitle);
   }
   
 private:
+  int mNItemsPerColumn = 0; // Windows can divide popup menu into columns
   int mPrefix; // 0 = no prefix, 1 = numbers no leading zeros, 2 = 1 lz, 3 = 2lz
   int mChosenItemIdx = -1;
   bool mCanMultiCheck; // multicheck = 0 doesn't actually prohibit multichecking, you should do that in your code, by calling CheckItemAlone instead of CheckItem
   WDL_PtrList<Item> mMenuItems;
   IPopupFunction mPopupFunc = nullptr;
+  WDL_String mRootTitle;
 };
 
 END_IGRAPHICS_NAMESPACE

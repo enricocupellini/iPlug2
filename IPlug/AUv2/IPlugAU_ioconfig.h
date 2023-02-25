@@ -12,17 +12,18 @@
 
 BEGIN_IPLUG_NAMESPACE
 
-static uint64_t GetAPIBusTypeForChannelIOConfig(int configIdx, ERoute dir, int busIdx, IOConfig* pConfig, WDL_TypedBuf<uint64_t>* APIBusTypes)
+static uint64_t GetAPIBusTypeForChannelIOConfig(int configIdx, ERoute dir, int busIdx, const IOConfig* pConfig, WDL_TypedBuf<uint64_t>* APIBusTypes)
 {
   assert(pConfig != nullptr);
   assert(busIdx >= 0 && busIdx < pConfig->NBuses(dir));
 
-  int numChans = pConfig->GetBusInfo(dir, busIdx)->mNChans;
+  int numChans = pConfig->GetBusInfo(dir, busIdx)->NChans();
 
   switch (numChans)
   {
-    case 0: APIBusTypes->Add(kAudioChannelLayoutTag_UseChannelDescriptions | 0);
-      return kAudioChannelLayoutTag_UseChannelDescriptions | 0;
+    case 0:
+      APIBusTypes->Add(kAudioChannelLayoutTag_UseChannelDescriptions | 0);
+      break;
     case 1:
       APIBusTypes->Add(kAudioChannelLayoutTag_Mono);
       break;
@@ -58,6 +59,16 @@ static uint64_t GetAPIBusTypeForChannelIOConfig(int configIdx, ERoute dir, int b
       APIBusTypes->Add(kAudioChannelLayoutTag_AudioUnit_7_1);
       APIBusTypes->Add(kAudioChannelLayoutTag_AudioUnit_7_1_Front);
       break;
+#if defined (MAC_OS_VERSION_11_0)
+    case 10:
+      // Atmos 7.1.2
+      APIBusTypes->Add(kAudioChannelLayoutTag_Atmos_7_1_2);
+      break;
+    case 12:
+      // Atmos 7.1.4
+      APIBusTypes->Add(kAudioChannelLayoutTag_Atmos_7_1_4);
+      break;
+#endif //MAC_OS_VERSION_11_0
     case 9:
     case 16: // 2nd and 3rd order ambisonics
       APIBusTypes->Add(kAudioChannelLayoutTag_HOA_ACN_SN3D | numChans);
@@ -66,12 +77,12 @@ static uint64_t GetAPIBusTypeForChannelIOConfig(int configIdx, ERoute dir, int b
       APIBusTypes->Add(kAudioChannelLayoutTag_DiscreteInOrder | numChans);
       break;
   }
-  return true;
+  return 0; // AU can return multiple types
 }
 
 END_IPLUG_NAMESPACE
 
 #else
-extern uint64_t GetAPIBusTypeForChannelIOConfig(int configIdx, iplug::ERoute dir, int busIdx, iplug::IOConfig* pConfig, WDL_TypedBuf<uint64_t>* APIBusTypes);
+extern uint64_t GetAPIBusTypeForChannelIOConfig(int configIdx, iplug::ERoute dir, int busIdx, const iplug::IOConfig* pConfig, WDL_TypedBuf<uint64_t>* APIBusTypes);
 #endif //CUSTOM_BUSTYPE_FUNC
 

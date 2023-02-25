@@ -15,7 +15,7 @@
  * @brief IPlug logging a.k.a tracing functionality
  *
  * To trace some arbitrary data:                 Trace(TRACELOC, "%s:%d", myStr, myInt);
- * To simply create a trace entry in the log:    TRACE;
+ * To simply create a trace entry in the log:    TRACE
  * No need to wrap tracer calls in #ifdef TRACER_BUILD because Trace is a no-op unless TRACER_BUILD is defined.
  */
 
@@ -36,12 +36,37 @@
 BEGIN_IPLUG_NAMESPACE
 
 #ifdef NDEBUG
-  #define DBGMSG(...)
+  #define DBGMSG(...) do {} while(0)// should be optimized away
 #else
   #if defined(OS_MAC) || defined(OS_LINUX) || defined(OS_WEB) || defined(OS_IOS)
     #define DBGMSG(...) printf(__VA_ARGS__)
   #elif defined OS_WIN
-    void DBGMSG(const char *format, ...);
+    #ifdef OutputDebugString
+    #undef OutputDebugString
+    #define OutputDebugString OutputDebugStringA
+    #endif
+
+    static void DBGMSG(const char* format, ...)
+    {
+      char buf[4096], * p = buf;
+      va_list args;
+      int     n;
+
+      va_start(args, format);
+      n = _vsnprintf(p, sizeof buf - 3, format, args); // buf-3 is room for CR/LF/NUL
+      va_end(args);
+
+      p += (n < 0) ? sizeof buf - 3 : n;
+
+      while (p > buf&& isspace(p[-1]))
+        *--p = '\0';
+
+      *p++ = '\r';
+      *p++ = '\n';
+      *p = '\0';
+
+      OutputDebugString(buf);
+    }
   #endif
 #endif
 
@@ -63,50 +88,18 @@ BEGIN_IPLUG_NAMESPACE
 
   #define APPEND_TIMESTAMP(str) AppendTimestamp(__DATE__, __TIME__, str)
 
-#ifdef OS_WIN
-#ifdef NDEBUG
-#define DBGMSG(...)
-#else
-  #ifdef OutputDebugString
-    #undef OutputDebugString
-    #define OutputDebugString OutputDebugStringA
-  #endif
-
-  static void DBGMSG(const char *format, ...)
-  {
-    char buf[4096], *p = buf;
-    va_list args;
-    int     n;
-    
-    va_start(args, format);
-    n = _vsnprintf(p, sizeof buf - 3, format, args); // buf-3 is room for CR/LF/NUL
-    va_end(args);
-    
-    p += (n < 0) ? sizeof buf - 3 : n;
-    
-    while ( p > buf  &&  isspace(p[-1]) )
-      *--p = '\0';
-    
-    *p++ = '\r';
-    *p++ = '\n';
-    *p   = '\0';
-    
-    OutputDebugString(buf);
-  }
-#endif
-#endif
-
   struct LogFile
   {
     FILE* mFP;
     
     LogFile()
     {
-      char logFilePath[100];
   #ifdef OS_WIN
-      sprintf(logFilePath, "%s/%s", "C:\\", LOGFILE); // TODO: check windows logFilePath
+      char logFilePath[MAX_WIN32_PATH_LEN];
+      snprintf(logFilePath, MAX_WIN32_PATH_LEN,"%s/%s", "C:\\", LOGFILE);
   #else
-      sprintf(logFilePath, "%s/%s", getenv("HOME"), LOGFILE);
+      char logFilePath[MAX_MACOS_PATH_LEN];
+      snprintf(logFilePath, MAX_MACOS_PATH_LEN, "%s/%s", getenv("HOME"), LOGFILE);
   #endif
       mFP = fopen(logFilePath, "w");
       assert(mFP);
@@ -152,7 +145,7 @@ BEGIN_IPLUG_NAMESPACE
     int i = (int) strlen(cStr);
     cStr[i++] = tz >= 0 ? '+' : '-';
     if (tz < 0) tz = -tz;
-    sprintf(&cStr[i], "%02d%02d", tz / 60, tz % 60);
+    snprintf(&cStr[i], 32, "%02d%02d", tz / 60, tz % 60);
     
     static char sTimeStr[32];
     strcpy(sTimeStr, cStr);
@@ -239,7 +232,7 @@ BEGIN_IPLUG_NAMESPACE
       WDL_MutexLock lock(&sLogMutex);
       intptr_t threadID = GetOrdinalThreadID(SYS_THREAD_ID);
       
-      if(strstr(funcName, "rocess") || strstr(funcName, "ender")) // These are not typos! by excluding the first character, we can use TRACE; in methods called ProcessXXX or process etc.
+      if(strstr(funcName, "rocess") || strstr(funcName, "ender")) // These are not typos! by excluding the first character, we can use TRACE in methods called ProcessXXX or process etc.
       {
         if(++sProcessCount > MAX_PROCESS_TRACE_COUNT)
         {

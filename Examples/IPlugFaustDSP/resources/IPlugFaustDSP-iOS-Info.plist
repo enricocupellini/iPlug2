@@ -9,11 +9,8 @@
 	<key>CFBundleIcons</key>
 	<dict>
 	</dict>
-	<key>CFBundleIcons~ipad</key>
-	<dict>
-	</dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.AcmeInc.app.IPlugFaustDSP</string>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -30,6 +27,14 @@
 	<string>public.app-category.music</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Needs Bluetooth MIDI</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Needs microphone access to process audio</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>IPlugFaustDSP-iOS-launchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -45,13 +50,6 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>UISupportedInterfaceOrientations~ipad</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>

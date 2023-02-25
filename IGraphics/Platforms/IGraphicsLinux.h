@@ -32,7 +32,7 @@ public:
   void HideMouseCursor() override;
   void ShowMouseCursor() override;
 
-  EMsgBoxResult ShowMessageBox(const char* str, const char* caption, EMsgBoxType type, IMsgBoxCompletionHanderFunc completionHandler) override;
+  EMsgBoxResult ShowMessageBox(const char* str, const char* caption, EMsgBoxType type, IMsgBoxCompletionHandlerFunc completionHandler) override;
   void ForceEndUserEdit() override;
 
   const char* GetPlatformAPIStr() override;
@@ -47,7 +47,7 @@ public:
 
   static int GetUserOSVersion();
   bool GetTextFromClipboard(WDL_String& str) override;
-  bool SetTextInClipboard(const WDL_String& str) override { return false; } // TODO
+  bool SetTextInClipboard(const char* str) override { return false; } // TODO
 
 protected:
   IPopupMenu* CreatePlatformPopupMenu(const IPopupMenu& menu, IRECT& bounds) override;
